@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         GravyPvP
 // @namespace    https://github.com/blazeice123/Veyra-Scripts
-// @version      2.5
+// @version      2.7
 // @description  Auto joins PvP matches, decorates classes with avatars, and adds animated attack effects.
 // @author       SkuLexX
 // @match        https://demonicscans.org/pvp_battle.php*
@@ -24,6 +24,7 @@
     const SETTINGS_KEY = "gravy_pvp_settings_v1";
     const WORKER_REPORT_KEY = "gravy_pvp_worker_report_v1";
     const WORKER_SESSION_KEY = "gravy_pvp_worker_session_v1";
+    const WORKER_COMMAND_KEY = "gravy_pvp_worker_command_v1";
     const CLASS_KEYS = ["auto", "warrior", "mage", "ranger", "rogue", "healer", "paladin", "necromancer", "monk", "berserker", "shadow"];
     const LAUNCH_FLAGS = parseLaunchFlags();
     const WORKER_MODE = LAUNCH_FLAGS.worker === "1";
@@ -44,6 +45,7 @@
             skillNumber: 2,
             playerClass: "auto",
             skillPriorities: {},
+            skillDisabled: {},
             expanded: true
         }
     };
@@ -131,6 +133,8 @@
     let battlePageEnteredAt = isBattlePage() ? Date.now() : 0;
     let workerFrame = null;
     let workerSession = !WORKER_MODE ? String(localStorage.getItem(WORKER_SESSION_KEY) || "").trim() : WORKER_SESSION_ID;
+    let previewState = buildPreviewState();
+    let battleNoTargetLoops = 0;
 
     window.addEventListener("error", (event) => {
         const message = event?.error?.message || event?.message || "Unknown script error";
@@ -191,17 +195,18 @@
         const normalized = { ...CONFIG.defaults, ...input };
         normalized.playerClass = normalizeClassKey(normalized.playerClass);
         normalized.skillNumber = clampSkillNumber(normalized.skillNumber);
-        normalized.skillPriorities = normalizeSkillPriorities(normalized.skillPriorities);
+        normalized.skillPriorities = normalizeSkillNameMap(normalized.skillPriorities);
+        normalized.skillDisabled = normalizeSkillNameMap(normalized.skillDisabled);
         return normalized;
     }
 
-    function normalizeSkillPriorities(priorities) {
-        if (!priorities || typeof priorities !== "object") {
+    function normalizeSkillNameMap(skillMap) {
+        if (!skillMap || typeof skillMap !== "object") {
             return {};
         }
 
         const normalized = {};
-        for (const [classKey, values] of Object.entries(priorities)) {
+        for (const [classKey, values] of Object.entries(skillMap)) {
             if (!Array.isArray(values)) {
                 continue;
             }
@@ -362,6 +367,179 @@
                 font-size: 12px;
             }
 
+            #${PANEL_ID} .apvp-preview {
+                position: relative;
+                padding: 10px;
+                background: linear-gradient(180deg, rgba(18, 24, 38, 0.94), rgba(10, 14, 24, 0.96));
+                border: 1px solid rgba(108, 132, 184, 0.22);
+                border-radius: 10px;
+                overflow: hidden;
+            }
+
+            #${PANEL_ID} .apvp-preview::before {
+                content: "";
+                position: absolute;
+                inset: auto -20% -34% -20%;
+                height: 58px;
+                background: radial-gradient(circle, rgba(74, 110, 186, 0.30), transparent 70%);
+                pointer-events: none;
+            }
+
+            #${PANEL_ID} .apvp-preview-stage {
+                position: relative;
+                display: grid;
+                grid-template-columns: minmax(0, 1fr) 90px minmax(0, 1fr);
+                align-items: end;
+                gap: 8px;
+                min-height: 110px;
+            }
+
+            #${PANEL_ID} .apvp-preview-side {
+                position: relative;
+                display: flex;
+                align-items: end;
+                justify-content: center;
+                min-height: 86px;
+            }
+
+            #${PANEL_ID} .apvp-preview-side .apvp-slot-visual {
+                position: relative;
+                left: auto;
+                right: auto;
+                bottom: auto;
+                width: 52px;
+                height: 62px;
+                animation-duration: 1.8s;
+            }
+
+            #${PANEL_ID} .apvp-preview-side .apvp-badge {
+                bottom: -14px;
+                font-size: 8px;
+            }
+
+            #${PANEL_ID} .apvp-preview-side.enemy .apvp-avatar {
+                transform: scaleX(-1);
+            }
+
+            #${PANEL_ID} .apvp-preview-side.apvp-preview-cast .apvp-slot-visual {
+                animation: apvp-cast 0.52s ease-out;
+            }
+
+            #${PANEL_ID} .apvp-preview-side.apvp-preview-hit .apvp-slot-visual {
+                animation: apvp-hit-shake 0.40s ease-out;
+            }
+
+            #${PANEL_ID} .apvp-preview-center {
+                position: relative;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                min-height: 86px;
+            }
+
+            #${PANEL_ID} .apvp-preview-effect {
+                position: relative;
+                width: 90px;
+                height: 54px;
+                pointer-events: none;
+            }
+
+            #${PANEL_ID} .apvp-preview-effect::before,
+            #${PANEL_ID} .apvp-preview-effect::after {
+                content: "";
+                position: absolute;
+                opacity: 0;
+            }
+
+            #${PANEL_ID} .apvp-preview-effect[data-effect="slash"]::before {
+                left: 2px;
+                top: 22px;
+                width: 84px;
+                height: 8px;
+                border-radius: 999px;
+                background: linear-gradient(90deg, transparent, #ff8d6a 24%, #ffe183 54%, transparent);
+                box-shadow: 0 0 14px rgba(255, 190, 106, 0.45);
+                animation: apvp-slash 0.44s ease-out forwards;
+            }
+
+            #${PANEL_ID} .apvp-preview-effect[data-effect="projectile"]::before,
+            #${PANEL_ID} .apvp-preview-effect[data-effect="arcane"]::before,
+            #${PANEL_ID} .apvp-preview-effect[data-effect="fire"]::before,
+            #${PANEL_ID} .apvp-preview-effect[data-effect="ice"]::before,
+            #${PANEL_ID} .apvp-preview-effect[data-effect="shadow"]::before,
+            #${PANEL_ID} .apvp-preview-effect[data-effect="holy"]::before {
+                left: 0;
+                top: 24px;
+                width: 90px;
+                height: 6px;
+                border-radius: 999px;
+                background: linear-gradient(90deg, transparent, #84b7ff 22%, #f3fbff 50%, transparent);
+                box-shadow: 0 0 14px rgba(132, 183, 255, 0.55);
+                animation: apvp-beam 0.52s ease-out forwards;
+            }
+
+            #${PANEL_ID} .apvp-preview-effect[data-effect="fire"]::before {
+                background: linear-gradient(90deg, transparent, #ff744e 22%, #ffd56e 50%, transparent);
+                box-shadow: 0 0 14px rgba(255, 148, 96, 0.55);
+            }
+
+            #${PANEL_ID} .apvp-preview-effect[data-effect="ice"]::before {
+                background: linear-gradient(90deg, transparent, #6cd9ff 22%, #f0ffff 50%, transparent);
+                box-shadow: 0 0 14px rgba(108, 217, 255, 0.55);
+            }
+
+            #${PANEL_ID} .apvp-preview-effect[data-effect="shadow"]::before {
+                background: linear-gradient(90deg, transparent, #7b73ff 22%, #6fe2bb 50%, transparent);
+                box-shadow: 0 0 14px rgba(123, 115, 255, 0.55);
+            }
+
+            #${PANEL_ID} .apvp-preview-effect[data-effect="holy"]::before {
+                background: linear-gradient(90deg, transparent, #ffd86b 22%, #fff7d1 50%, transparent);
+                box-shadow: 0 0 14px rgba(255, 216, 107, 0.55);
+            }
+
+            #${PANEL_ID} .apvp-preview-effect[data-effect="heal"]::before,
+            #${PANEL_ID} .apvp-preview-effect[data-effect="heal"]::after {
+                border-radius: 50%;
+                animation: apvp-pop 0.66s ease-out forwards;
+            }
+
+            #${PANEL_ID} .apvp-preview-effect[data-effect="heal"]::before {
+                left: 10px;
+                top: 10px;
+                width: 32px;
+                height: 32px;
+                border: 2px solid #7fffd4;
+                box-shadow: 0 0 16px rgba(127, 255, 212, 0.45);
+            }
+
+            #${PANEL_ID} .apvp-preview-effect[data-effect="heal"]::after {
+                left: 18px;
+                top: 18px;
+                width: 16px;
+                height: 16px;
+                background: radial-gradient(circle, #fffed2 0 28%, #7fffd4 29% 70%, transparent 74%);
+            }
+
+            #${PANEL_ID} .apvp-preview-effect[data-effect="impact"]::before {
+                left: 34px;
+                top: 10px;
+                width: 22px;
+                height: 22px;
+                border-radius: 50%;
+                background: radial-gradient(circle, #fff3d8 0 30%, #ffb45a 31% 68%, transparent 72%);
+                box-shadow: 0 0 16px rgba(255, 180, 90, 0.45);
+                animation: apvp-pop 0.46s ease-out forwards;
+            }
+
+            #${PANEL_ID} .apvp-preview-label {
+                margin-top: 8px;
+                text-align: center;
+                color: #d7e4f2;
+                font-size: 12px;
+                min-height: 18px;
+            }
+
             #${PANEL_ID} .apvp-priority {
                 display: grid;
                 gap: 8px;
@@ -397,6 +575,12 @@
                 border-radius: 8px;
             }
 
+            #${PANEL_ID} .apvp-priority-item.apvp-skill-disabled {
+                opacity: 0.62;
+                border-color: rgba(255, 122, 122, 0.22);
+                background: rgba(70, 18, 18, 0.16);
+            }
+
             #${PANEL_ID} .apvp-priority-rank {
                 color: #95a8bc;
                 font-size: 12px;
@@ -408,6 +592,14 @@
                 overflow: hidden;
                 text-overflow: ellipsis;
                 white-space: nowrap;
+            }
+
+            #${PANEL_ID} .apvp-priority-name small {
+                margin-left: 6px;
+                color: #ffb7b7;
+                font-size: 10px;
+                letter-spacing: 0.04em;
+                text-transform: uppercase;
             }
 
             #${PANEL_ID} .apvp-priority-actions {
@@ -423,6 +615,17 @@
                 padding: 4px 7px;
                 background: #223140;
                 border-color: #405163;
+            }
+
+            #${PANEL_ID} .apvp-priority-actions button[data-action="toggle-skill-enabled"] {
+                min-width: 34px;
+                background: #3f6332;
+                border-color: #5f8a4e;
+            }
+
+            #${PANEL_ID} .apvp-priority-actions button[data-action="toggle-skill-enabled"][data-disabled="1"] {
+                background: #6b2b2b;
+                border-color: #944848;
             }
 
             #${PANEL_ID} .apvp-priority-empty {
@@ -974,6 +1177,7 @@
                         <button type="button" data-action="stop-worker">Stop BG</button>
                     </div>
                     <div class="apvp-worker"></div>
+                    <div class="apvp-preview"></div>
                     <div class="apvp-row">
                         <label><input type="checkbox" data-setting="autoJoin">Auto join</label>
                         <label><input type="checkbox" data-setting="autoFight">Auto fight</label>
@@ -1036,14 +1240,16 @@
             workerNode.textContent = getWorkerSummaryText();
         }
 
+        syncPreviewPanel(panel);
+
         const startWorkerButton = panel.querySelector('button[data-action="start-worker"]');
         if (startWorkerButton instanceof HTMLButtonElement) {
-            startWorkerButton.disabled = isBackgroundWorkerRunning();
+            startWorkerButton.disabled = hasBackgroundWorkerSession();
         }
 
         const stopWorkerButton = panel.querySelector('button[data-action="stop-worker"]');
         if (stopWorkerButton instanceof HTMLButtonElement) {
-            stopWorkerButton.disabled = !isBackgroundWorkerRunning();
+            stopWorkerButton.disabled = !hasBackgroundWorkerSession();
         }
 
         const errorNode = panel.querySelector(".apvp-error");
@@ -1067,6 +1273,98 @@
         }
     }
 
+    function buildPreviewState(overrides = {}) {
+        const selectedClass = getSelectedPlayerClassKey() || "adventurer";
+        return {
+            allyClass: selectedClass,
+            enemyClass: "shadow",
+            effectType: "",
+            actionText: "Standing by",
+            phase: "idle",
+            eventId: 0,
+            ...overrides
+        };
+    }
+
+    function getCurrentPreviewState() {
+        if (!WORKER_MODE && hasBackgroundWorkerSession()) {
+            const report = readWorkerReport();
+            const sessionId = String(workerSession || localStorage.getItem(WORKER_SESSION_KEY) || "").trim();
+            if (report?.sessionId === sessionId && report.preview) {
+                return buildPreviewState(report.preview);
+            }
+        }
+
+        return buildPreviewState(previewState);
+    }
+
+    function syncPreviewPanel(panel) {
+        const container = panel.querySelector(".apvp-preview");
+        if (!container) {
+            return;
+        }
+
+        const preview = getCurrentPreviewState();
+        const renderKey = JSON.stringify([
+            preview.allyClass,
+            preview.enemyClass,
+            preview.effectType,
+            preview.actionText,
+            preview.phase,
+            preview.eventId
+        ]);
+
+        if (container.dataset.renderKey === renderKey) {
+            return;
+        }
+
+        container.dataset.renderKey = renderKey;
+        container.innerHTML = buildPreviewMarkup(preview);
+    }
+
+    function buildPreviewMarkup(preview) {
+        const allyProfile = getClassProfile(preview.allyClass);
+        const enemyProfile = getClassProfile(preview.enemyClass || "shadow");
+        const allyClass = preview.phase === "action" || preview.phase === "cast" ? "apvp-preview-cast" : "";
+        const enemyClass = preview.phase === "action" || preview.phase === "hit" ? "apvp-preview-hit" : "";
+
+        return `
+            <div class="apvp-preview-stage">
+                <div class="apvp-preview-side ally ${allyClass}">
+                    <div class="apvp-slot-visual" data-class="${escapeHtml(preview.allyClass)}" data-team="ally">${buildAvatarMarkup(allyProfile.label)}</div>
+                </div>
+                <div class="apvp-preview-center">
+                    <div class="apvp-preview-effect" data-effect="${escapeHtml(preview.effectType || "")}" data-event="${escapeHtml(preview.eventId || 0)}"></div>
+                </div>
+                <div class="apvp-preview-side enemy ${enemyClass}">
+                    <div class="apvp-slot-visual" data-class="${escapeHtml(preview.enemyClass || "shadow")}" data-team="enemy">${buildAvatarMarkup(enemyProfile.label)}</div>
+                </div>
+            </div>
+            <div class="apvp-preview-label">${escapeHtml(preview.actionText || "Standing by")}</div>
+        `;
+    }
+
+    function recordPreviewEvent(actionText, effectType = "", options = {}) {
+        previewState = buildPreviewState({
+            ...previewState,
+            allyClass: options.allyClass || previewState.allyClass || getSelectedPlayerClassKey() || "adventurer",
+            enemyClass: options.enemyClass || previewState.enemyClass || "shadow",
+            effectType,
+            actionText,
+            phase: options.phase || (effectType ? "action" : "idle"),
+            eventId: Date.now()
+        });
+
+        if (WORKER_MODE) {
+            publishWorkerReport(options.reportPhase || "running", actionText);
+            return;
+        }
+
+        if (!hasBackgroundWorkerSession()) {
+            syncPanelState();
+        }
+    }
+
     function renderSkillPriorityPanel(panel) {
         const container = panel.querySelector(".apvp-priority");
         if (!container) {
@@ -1076,6 +1374,7 @@
         const classKey = getPriorityClassKey();
         const profile = getClassProfile(classKey);
         const priorities = getSkillPriorityList(classKey);
+        const disabledSkills = new Set(getDisabledSkillList(classKey));
 
         container.innerHTML = `
             <div class="apvp-priority-head">
@@ -1084,10 +1383,11 @@
             </div>
             <div class="apvp-priority-list">
                 ${priorities.length ? priorities.map((skillName, index) => `
-                    <div class="apvp-priority-item">
+                    <div class="apvp-priority-item ${disabledSkills.has(skillName) ? "apvp-skill-disabled" : ""}">
                         <div class="apvp-priority-rank">${index + 1}</div>
-                        <div class="apvp-priority-name" title="${escapeHtml(skillName)}">${escapeHtml(skillName)}</div>
+                        <div class="apvp-priority-name" title="${escapeHtml(skillName)}">${escapeHtml(skillName)}${disabledSkills.has(skillName) ? " <small>Off</small>" : ""}</div>
                         <div class="apvp-priority-actions">
+                            <button type="button" data-action="toggle-skill-enabled" data-skill="${escapeHtml(skillName)}" data-disabled="${disabledSkills.has(skillName) ? "1" : "0"}">${disabledSkills.has(skillName) ? "Off" : "On"}</button>
                             <button type="button" data-action="skill-up" data-index="${index}" ${index === 0 ? "disabled" : ""}>Up</button>
                             <button type="button" data-action="skill-down" data-index="${index}" ${index === priorities.length - 1 ? "disabled" : ""}>Dn</button>
                         </div>
@@ -1117,6 +1417,26 @@
         return list
             .map((skillName) => String(skillName || "").trim())
             .filter(Boolean);
+    }
+
+    function getDisabledSkillList(classKey) {
+        const disabled = settings.skillDisabled;
+        if (!disabled || typeof disabled !== "object") {
+            return [];
+        }
+
+        const list = disabled[classKey];
+        if (!Array.isArray(list)) {
+            return [];
+        }
+
+        return list
+            .map((skillName) => String(skillName || "").trim())
+            .filter(Boolean);
+    }
+
+    function isSkillDisabled(classKey, skillName) {
+        return getDisabledSkillList(classKey).includes(String(skillName || "").trim());
     }
 
     function handlePanelChange(event) {
@@ -1185,6 +1505,11 @@
             return;
         }
 
+        if (action === "toggle-skill-enabled") {
+            toggleSkillEnabled(target.dataset.skill || "");
+            return;
+        }
+
         if (action === "reset-skills") {
             resetSkillPriority();
         }
@@ -1227,16 +1552,42 @@
         syncPanelState();
     }
 
+    function toggleSkillEnabled(skillName) {
+        const normalizedSkill = String(skillName || "").trim();
+        if (!normalizedSkill) {
+            return;
+        }
+
+        const classKey = getPriorityClassKey();
+        const disabledSkills = getDisabledSkillList(classKey);
+        const nextDisabled = disabledSkills.includes(normalizedSkill)
+            ? disabledSkills.filter((name) => name !== normalizedSkill)
+            : [...disabledSkills, normalizedSkill];
+
+        if (nextDisabled.length) {
+            settings.skillDisabled[classKey] = uniqueSkillNames(nextDisabled);
+        } else {
+            delete settings.skillDisabled[classKey];
+        }
+
+        saveSettings();
+        syncPanelState();
+        updateStatus(`${normalizedSkill} ${isSkillDisabled(classKey, normalizedSkill) ? "disabled" : "enabled"} for ${getClassProfile(classKey).label}`);
+    }
+
     function resetSkillPriority() {
         const classKey = getPriorityClassKey();
-        if (!settings.skillPriorities?.[classKey]) {
+        const hasPriority = !!settings.skillPriorities?.[classKey];
+        const hasDisabled = !!settings.skillDisabled?.[classKey];
+        if (!hasPriority && !hasDisabled) {
             return;
         }
 
         delete settings.skillPriorities[classKey];
+        delete settings.skillDisabled[classKey];
         saveSettings();
         syncPanelState();
-        updateStatus(`Cleared saved skill order for ${getClassProfile(classKey).label}`);
+        updateStatus(`Cleared saved skill settings for ${getClassProfile(classKey).label}`);
     }
 
     function parseLaunchFlags() {
@@ -1270,6 +1621,7 @@
             frame.name = frameName;
         }
         frame.src = String(urlValue || "");
+        frame.setAttribute("sandbox", "allow-scripts allow-same-origin allow-forms");
         frame.setAttribute("aria-hidden", "true");
         frame.tabIndex = -1;
         frame.style.cssText = "position:absolute;left:-99999px;top:-99999px;width:1px;height:1px;border:0;opacity:0;pointer-events:none;";
@@ -1281,8 +1633,70 @@
         return `gravy-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
     }
 
+    function hasBackgroundWorkerSession() {
+        return !WORKER_MODE && !!String(workerSession || localStorage.getItem(WORKER_SESSION_KEY) || "").trim();
+    }
+
+    function readWorkerCommand() {
+        try {
+            const raw = localStorage.getItem(WORKER_COMMAND_KEY);
+            return raw ? JSON.parse(raw) : null;
+        } catch (error) {
+            return null;
+        }
+    }
+
+    function publishWorkerCommand(command, sessionId, detail = "") {
+        const normalizedSession = String(sessionId || "").trim();
+        if (!normalizedSession) {
+            return;
+        }
+
+        localStorage.setItem(WORKER_COMMAND_KEY, JSON.stringify({
+            sessionId: normalizedSession,
+            command,
+            detail: String(detail || ""),
+            issuedAt: Date.now()
+        }));
+    }
+
+    function clearWorkerCommand(sessionId) {
+        const command = readWorkerCommand();
+        if (command?.sessionId === sessionId) {
+            localStorage.removeItem(WORKER_COMMAND_KEY);
+        }
+    }
+
+    function shouldStopWorkerSession() {
+        if (!WORKER_MODE) {
+            return false;
+        }
+
+        const command = readWorkerCommand();
+        return command?.sessionId === WORKER_SESSION_ID && command.command === "stop";
+    }
+
+    function closeCurrentWorkerSoon() {
+        if (!WORKER_MODE) {
+            return;
+        }
+
+        window.setTimeout(() => {
+            try {
+                if (window.top !== window.self && window.frameElement instanceof HTMLIFrameElement) {
+                    window.frameElement.remove();
+                    return;
+                }
+
+                window.close();
+            } catch (error) {
+                // Ignore windows the browser refuses to close.
+            }
+        }, 140);
+    }
+
     function startBackgroundWorker() {
-        if (WORKER_MODE || isBackgroundWorkerRunning()) {
+        if (WORKER_MODE || hasBackgroundWorkerSession()) {
             syncPanelState();
             return;
         }
@@ -1290,6 +1704,7 @@
         const sessionId = buildWorkerSessionId();
         workerSession = sessionId;
         localStorage.setItem(WORKER_SESSION_KEY, sessionId);
+        clearWorkerCommand(sessionId);
         publishWorkerReport("starting", "Launching hidden background worker", sessionId);
 
         const url = new URL("https://demonicscans.org/pvp.php");
@@ -1299,18 +1714,29 @@
     }
 
     function stopBackgroundWorker(message = "Stopped hidden background worker") {
+        const sessionId = String(workerSession || localStorage.getItem(WORKER_SESSION_KEY) || "").trim();
+        if (sessionId) {
+            publishWorkerCommand("stop", sessionId, message);
+        }
+
         if (workerFrame) {
             workerFrame.remove();
             workerFrame = null;
         }
 
-        const sessionId = workerSession || String(localStorage.getItem(WORKER_SESSION_KEY) || "").trim();
         if (sessionId) {
             publishWorkerReport("stopped", message, sessionId);
         }
 
         workerSession = "";
+        previewState = buildPreviewState({
+            actionText: "Background idle",
+            phase: "idle",
+            eventId: Date.now()
+        });
         localStorage.removeItem(WORKER_SESSION_KEY);
+        localStorage.removeItem(WORKER_REPORT_KEY);
+        localStorage.removeItem(WORKER_COMMAND_KEY);
         updateStatus(message);
     }
 
@@ -1338,13 +1764,19 @@
             return;
         }
 
+        const preview = buildPreviewState(previewState);
         localStorage.setItem(WORKER_REPORT_KEY, JSON.stringify({
             sessionId,
             phase,
             detail: String(detail || ""),
             path: `${location.pathname}${location.search}`,
-            updatedAt: Date.now()
+            updatedAt: Date.now(),
+            preview
         }));
+
+        if (phase === "stopped") {
+            clearWorkerCommand(sessionId);
+        }
     }
 
     function getCurrentWorkerState() {
@@ -1457,11 +1889,11 @@
         }
 
         const element = node;
-        if (element.id === PANEL_ID || element.id === STAGE_ID) {
+        if (element.id === PANEL_ID || element.id === STAGE_ID || element.id === WORKER_HOST_ID) {
             return true;
         }
 
-        return !!element.closest(`#${PANEL_ID}, #${STAGE_ID}, .apvp-slot-visual`);
+        return !!element.closest(`#${PANEL_ID}, #${STAGE_ID}, #${WORKER_HOST_ID}, .apvp-slot-visual`);
     }
 
     function scheduleTick(delay = 100) {
@@ -1484,7 +1916,23 @@
         try {
             if (!WORKER_MODE) {
                 renderPanel();
-                refreshBattleVisuals();
+                if (hasBackgroundWorkerSession()) {
+                    cleanupBattleVisuals();
+                } else {
+                    refreshBattleVisuals();
+                }
+            }
+
+            if (shouldStopWorkerSession()) {
+                previewState = buildPreviewState({
+                    actionText: "Stopped",
+                    phase: "idle",
+                    eventId: Date.now()
+                });
+                publishWorkerReport("stopped", "Stopped by host");
+                settings.enabled = false;
+                closeCurrentWorkerSoon();
+                return;
             }
 
             if (isBattlePage()) {
@@ -1498,6 +1946,7 @@
                 }
             } else {
                 battlePageEnteredAt = 0;
+                battleNoTargetLoops = 0;
             }
 
             if (!settings.enabled) {
@@ -1505,7 +1954,7 @@
                 return;
             }
 
-            if (!WORKER_MODE && isBackgroundWorkerRunning()) {
+            if (!WORKER_MODE && hasBackgroundWorkerSession()) {
                 if (statusText !== getWorkerSummaryText()) {
                     updateStatus(getWorkerSummaryText());
                 } else {
@@ -1564,6 +2013,10 @@
         }
 
         if (continueButton) {
+            recordPreviewEvent("Continuing solo match", "", {
+                allyClass: getSelectedPlayerClassKey() || "adventurer",
+                phase: "idle"
+            });
             clickElement(continueButton, "Continuing solo match");
             return;
         }
@@ -1589,6 +2042,10 @@
         }
 
         lastJoinAt = Date.now();
+        recordPreviewEvent("Joined PvP matchmaking", "", {
+            allyClass: getSelectedPlayerClassKey() || "adventurer",
+            phase: "idle"
+        });
         clickElement(joinButton, "Joined PvP matchmaking");
     }
 
@@ -1638,7 +2095,6 @@
         }
 
         const resultBannerVisible = hasResultBanner();
-        const attackButton = findAttackButton();
         const skillButtons = getSkillButtons();
         const enemySlots = getVisibleTeamSlots(ENEMY_CONTAINER_SELECTORS);
         const allySlots = getVisibleTeamSlots(ALLY_CONTAINER_SELECTORS);
@@ -1650,7 +2106,7 @@
             return false;
         }
 
-        if (!resultBannerVisible && (skillButtons.length || attackButton)) {
+        if (!resultBannerVisible && skillButtons.length) {
             return false;
         }
 
@@ -1658,6 +2114,12 @@
             return false;
         }
 
+        battleNoTargetLoops = 0;
+        recordPreviewEvent("Battle finished", "", {
+            allyClass: getSelectedPlayerClassKey() || previewState.allyClass || "adventurer",
+            enemyClass: previewState.enemyClass || "shadow",
+            phase: "idle"
+        });
         clickElement(backButton, "Battle finished, returning");
         return true;
     }
@@ -1665,9 +2127,25 @@
     async function targetLowestHpEnemy() {
         const targets = getEnemySlots();
         if (!targets.length) {
+            battleNoTargetLoops += 1;
+            const backButton = findVisibleElement([
+                ".back-btn",
+                "button.back-btn",
+                "a.back-btn",
+                ".result-actions .back-btn"
+            ]);
+            if (battleNoTargetLoops >= 2 && backButton && isClickable(backButton)) {
+                recordPreviewEvent("No targets left", "", {
+                    phase: "idle"
+                });
+                clickElement(backButton, "No targets left, returning");
+                return;
+            }
             updateStatus("Battle: no enemy targets found");
             return;
         }
+
+        battleNoTargetLoops = 0;
 
         const target = targets.reduce((lowest, slot) => {
             if (!lowest) {
@@ -1686,6 +2164,11 @@
 
         try {
             const targetName = getSlotName(target);
+            lastTargetSlot = target;
+            recordPreviewEvent(`Targeting ${targetName}`, "", {
+                phase: "cast",
+                enemyClass: resolveSlotClassKey(target, "enemy")
+            });
             clickElement(target, `Selected ${targetName} (${Math.round(getHpPercent(target))}% HP)`);
 
             const skillButtons = await waitFor(
@@ -1730,6 +2213,13 @@
                 return;
             }
 
+            const classKey = getPriorityClassKey() || "adventurer";
+            const skillName = getButtonLabel(chosenButton);
+            recordPreviewEvent(`Used ${skillName}`, classifyEffect(skillName, classKey), {
+                allyClass: classKey,
+                enemyClass: lastTargetSlot ? resolveSlotClassKey(lastTargetSlot, "enemy") : "shadow",
+                phase: "action"
+            });
             clickElement(chosenButton, `Used ${getButtonLabel(chosenButton)}`);
         } finally {
             if (!alreadyBusy) {
@@ -1765,8 +2255,13 @@
     function chooseSkillButton(buttons, enabledButtons) {
         const classKey = getPriorityClassKey();
         const priorities = getSkillPriorityList(classKey);
+        const usableButtons = enabledButtons.filter((button) => !isSkillDisabled(classKey, getButtonLabel(button)));
 
         for (const skillName of priorities) {
+            if (isSkillDisabled(classKey, skillName)) {
+                continue;
+            }
+
             const matchingButton = buttons.find((button) => isClickable(button) && getButtonLabel(button) === skillName);
             if (matchingButton) {
                 return matchingButton;
@@ -1774,11 +2269,11 @@
         }
 
         const fallbackButton = buttons[settings.skillNumber - 1];
-        if (isClickable(fallbackButton)) {
+        if (isClickable(fallbackButton) && !isSkillDisabled(classKey, getButtonLabel(fallbackButton))) {
             return fallbackButton;
         }
 
-        return enabledButtons[0] || null;
+        return usableButtons[0] || null;
     }
 
     function uniqueSkillNames(skillNames) {
@@ -1816,7 +2311,10 @@
         const slot = target.closest(".pSlot");
         if (slot && isVisible(slot)) {
             lastTargetSlot = slot;
-            pulseSlotVisual(slot, "apvp-hit", 280);
+            recordPreviewEvent(`Targeting ${getSlotName(slot)}`, "", {
+                phase: "cast",
+                enemyClass: resolveSlotClassKey(slot, "enemy")
+            });
             return;
         }
 
@@ -1828,26 +2326,7 @@
     }
 
     function refreshBattleVisuals() {
-        if (!settings.battleVisuals || !isBattlePage()) {
-            cleanupBattleVisuals();
-            return;
-        }
-
-        ensureBattleStage();
-
-        const slots = getTrackedBattleSlots();
-        const trackedParents = new Set(slots);
-
-        for (const slot of slots) {
-            renderSlotVisual(slot);
-        }
-
-        const visuals = document.querySelectorAll(".apvp-slot-visual");
-        for (const visual of visuals) {
-            if (!(visual.parentElement instanceof HTMLElement) || !trackedParents.has(visual.parentElement) || !isVisible(visual.parentElement)) {
-                visual.remove();
-            }
-        }
+        cleanupBattleVisuals();
     }
 
     function cleanupBattleVisuals() {
@@ -2138,17 +2617,10 @@
         const actorClass = resolveSlotClassKey(actor, actorTeam);
         const effectType = classifyEffect(skillName, actorClass);
         const target = resolveEffectTarget(effectType, actor);
-
-        pulseSlotVisual(actor, "apvp-casting", 420);
-        if (target) {
-            window.setTimeout(() => pulseSlotVisual(target, "apvp-hit", 420), 140);
-        }
-
-        spawnEffect({
-            source: actor,
-            target,
-            effectType,
-            classKey: actorClass
+        recordPreviewEvent(`Used ${skillName}`, effectType, {
+            allyClass: actorClass,
+            enemyClass: target ? resolveSlotClassKey(target, getSlotTeam(target)) : previewState.enemyClass || "shadow",
+            phase: "action"
         });
     }
 
@@ -2672,7 +3144,19 @@
     }
 
     function clickElement(element, status) {
-        element.click();
+        const anchor = element instanceof HTMLAnchorElement ? element : element.closest?.("a[href]");
+        if (WORKER_MODE && anchor instanceof HTMLAnchorElement && anchor.href) {
+            window.location.href = anchor.href;
+        } else if (WORKER_MODE && "form" in element && element.form instanceof HTMLFormElement) {
+            element.form.setAttribute("target", "_self");
+            if (typeof element.form.requestSubmit === "function" && (element instanceof HTMLButtonElement || element instanceof HTMLInputElement)) {
+                element.form.requestSubmit(element);
+            } else {
+                element.form.submit();
+            }
+        } else {
+            element.click();
+        }
         updateStatus(status);
         touchProgress();
     }
@@ -2682,6 +3166,10 @@
     }
 
     function runWatchdog() {
+        if (!WORKER_MODE && hasBackgroundWorkerSession()) {
+            return;
+        }
+
         if (!settings.enabled || !settings.autoReload || (!WORKER_MODE && document.hidden)) {
             return;
         }

@@ -7,6 +7,7 @@ Tampermonkey userscript for `demonicscans.org` PvP automation.
 - Auto joins PvP matches when tokens are available
 - Auto targets the lowest-HP enemy
 - Learns skills per class and lets you reorder them by usage priority
+- Lets you turn individual learned skills on or off per class
 - Uses your saved class priority list with a fallback slot if needed
 - Visible in-page control panel for toggles and class selection
 - Optional animated class avatars and spell/attack effects

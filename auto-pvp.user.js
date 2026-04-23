@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         GravyPvP
 // @namespace    https://github.com/blazeice123/Veyra-Scripts
-// @version      2.2
+// @version      2.3
 // @description  Auto joins PvP matches, decorates classes with avatars, and adds animated attack effects.
 // @author       SkuLexX
 // @match        https://demonicscans.org/pvp_battle.php*
@@ -202,9 +202,11 @@
         style.textContent = `
             #${PANEL_ID} {
                 position: fixed;
-                right: 16px;
-                bottom: 16px;
-                width: 280px;
+                right: 8px;
+                bottom: 8px;
+                width: min(360px, calc(100vw - 16px));
+                max-height: calc(100vh - 16px);
+                box-sizing: border-box;
                 z-index: 2147483647;
                 color: #f2f5f7;
                 background: rgba(18, 23, 29, 0.96);
@@ -212,7 +214,8 @@
                 border-radius: 12px;
                 box-shadow: 0 12px 32px rgba(0, 0, 0, 0.35);
                 font: 13px/1.4 Verdana, sans-serif;
-                overflow: hidden;
+                overflow-x: hidden;
+                overflow-y: auto;
             }
 
             #${PANEL_ID} .apvp-header {
@@ -228,6 +231,7 @@
             #${PANEL_ID} .apvp-title {
                 font-weight: 700;
                 letter-spacing: 0.02em;
+                min-width: 0;
             }
 
             #${PANEL_ID} .apvp-body {
@@ -241,9 +245,9 @@
             }
 
             #${PANEL_ID} .apvp-row {
-                display: flex;
-                align-items: center;
-                justify-content: space-between;
+                display: grid;
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+                align-items: start;
                 gap: 10px;
             }
 
@@ -252,6 +256,7 @@
                 align-items: center;
                 gap: 8px;
                 cursor: pointer;
+                min-width: 0;
             }
 
             #${PANEL_ID} input[type="checkbox"] {
@@ -270,7 +275,8 @@
             }
 
             #${PANEL_ID} select {
-                min-width: 116px;
+                min-width: 0;
+                width: 100%;
                 padding: 4px 6px;
                 color: #f2f5f7;
                 background: #0f1419;
@@ -287,6 +293,12 @@
                 padding: 5px 10px;
                 cursor: pointer;
                 font: inherit;
+                white-space: nowrap;
+                flex-shrink: 0;
+            }
+
+            #${PANEL_ID} .apvp-row > * {
+                min-width: 0;
             }
 
             #${PANEL_ID} button:hover {
@@ -333,6 +345,7 @@
                 display: flex;
                 align-items: center;
                 justify-content: space-between;
+                flex-wrap: wrap;
                 gap: 8px;
                 font-size: 12px;
                 color: #cbd5df;
@@ -370,6 +383,7 @@
             #${PANEL_ID} .apvp-priority-actions {
                 display: flex;
                 align-items: center;
+                flex-wrap: wrap;
                 gap: 4px;
             }
 
@@ -384,6 +398,12 @@
             #${PANEL_ID} .apvp-priority-empty {
                 color: #aeb9c4;
                 font-size: 12px;
+            }
+
+            @media (max-width: 360px) {
+                #${PANEL_ID} .apvp-row {
+                    grid-template-columns: 1fr;
+                }
             }
 
             #${STAGE_ID} {

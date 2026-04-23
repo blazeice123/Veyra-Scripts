@@ -7,6 +7,9 @@
 // @match        https://demonicscans.org/pvp_battle.php*
 // @match        https://demonicscans.org/pvp.php*
 // @icon         https://www.google.com/s2/favicons?sz=64&domain=demonicscans.org
+// @homepageURL  https://github.com/blazeice123/Veyra-Scripts/tree/main
+// @updateURL    https://raw.githubusercontent.com/blazeice123/Veyra-Scripts/main/auto-pvp.user.js
+// @downloadURL  https://raw.githubusercontent.com/blazeice123/Veyra-Scripts/main/auto-pvp.user.js
 // @grant        none
 // @run-at       document-idle
 // ==/UserScript==

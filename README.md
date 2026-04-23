@@ -23,8 +23,10 @@ Tampermonkey userscript for `demonicscans.org` PvP automation.
 ## Install
 
 1. Install the Tampermonkey browser extension.
-2. Open `auto-pvp.user.js`.
-3. Create a new userscript in Tampermonkey and paste in the file contents, or open the raw file from GitHub after upload.
+2. Open the raw GitHub file URL in your browser:
+   `https://raw.githubusercontent.com/blazeice123/Veyra-Scripts/main/auto-pvp.user.js`
+3. Tampermonkey should open the install or update prompt automatically.
+4. If it does not, open Tampermonkey Dashboard and import the script manually.
 
 ## Notes
 

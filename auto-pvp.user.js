@@ -1,6 +1,6 @@
 // ==UserScript==
-// @name         Auto PvP
-// @namespace    http://tampermonkey.net/
+// @name         GravyPvP
+// @namespace    https://github.com/blazeice123/Veyra-Scripts
 // @version      2.1
 // @description  Auto joins PvP matches, decorates classes with avatars, and adds animated attack effects.
 // @author       SkuLexX
@@ -17,10 +17,10 @@
 (() => {
     "use strict";
 
-    const PANEL_ID = "auto-pvp-panel";
-    const STYLE_ID = "auto-pvp-style";
-    const STAGE_ID = "auto-pvp-stage";
-    const SETTINGS_KEY = "auto_pvp_settings_v2";
+    const PANEL_ID = "gravy-pvp-panel";
+    const STYLE_ID = "gravy-pvp-style";
+    const STAGE_ID = "gravy-pvp-stage";
+    const SETTINGS_KEY = "gravy_pvp_settings_v1";
     const CLASS_KEYS = ["auto", "warrior", "mage", "ranger", "rogue", "healer", "paladin", "necromancer", "monk", "berserker", "shadow"];
     const CONFIG = {
         tickMs: 1200,
@@ -155,7 +155,7 @@
             const stored = JSON.parse(localStorage.getItem(SETTINGS_KEY) || "{}");
             return { ...CONFIG.defaults, ...stored };
         } catch (error) {
-            console.warn("Auto PvP: failed to read settings", error);
+            console.warn("GravyPvP: failed to read settings", error);
             return { ...CONFIG.defaults };
         }
     }
@@ -815,36 +815,89 @@
             panel.addEventListener("change", handlePanelChange);
             panel.addEventListener("click", handlePanelClick);
             (document.body || document.documentElement).appendChild(panel);
+            panel.innerHTML = `
+                <div class="apvp-header">
+                    <div class="apvp-title">GravyPvP</div>
+                    <button type="button" data-action="toggle-panel">Hide</button>
+                </div>
+                <div class="apvp-body">
+                    <div class="apvp-row">
+                        <label><input type="checkbox" data-setting="enabled">Enabled</label>
+                        <button type="button" data-action="run-now">Run now</button>
+                    </div>
+                    <div class="apvp-row">
+                        <label><input type="checkbox" data-setting="autoJoin">Auto join</label>
+                        <label><input type="checkbox" data-setting="autoFight">Auto fight</label>
+                    </div>
+                    <div class="apvp-row">
+                        <label><input type="checkbox" data-setting="autoReload">Safe reload</label>
+                        <label><input type="checkbox" data-setting="battleVisuals">Visual FX</label>
+                    </div>
+                    <div class="apvp-row">
+                        <label>Skill <input type="number" min="1" max="9" step="1" data-setting="skillNumber"></label>
+                        <label>Class ${buildClassSelect()}</label>
+                    </div>
+                    <div class="apvp-status"></div>
+                    <div class="apvp-error" hidden></div>
+                    <div class="apvp-muted"></div>
+                </div>
+            `;
+        }
+
+        syncPanelState();
+    }
+
+    function syncPanelState() {
+        const panel = document.getElementById(PANEL_ID);
+        if (!panel) {
+            return;
         }
 
         panel.classList.toggle("collapsed", !settings.expanded);
-        panel.innerHTML = `
-            <div class="apvp-header">
-                <div class="apvp-title">Auto PvP</div>
-                <button type="button" data-action="toggle-panel">${settings.expanded ? "Hide" : "Show"}</button>
-            </div>
-            <div class="apvp-body">
-                <div class="apvp-row">
-                    <label><input type="checkbox" data-setting="enabled" ${settings.enabled ? "checked" : ""}>Enabled</label>
-                    <button type="button" data-action="run-now">Run now</button>
-                </div>
-                <div class="apvp-row">
-                    <label><input type="checkbox" data-setting="autoJoin" ${settings.autoJoin ? "checked" : ""}>Auto join</label>
-                    <label><input type="checkbox" data-setting="autoFight" ${settings.autoFight ? "checked" : ""}>Auto fight</label>
-                </div>
-                <div class="apvp-row">
-                    <label><input type="checkbox" data-setting="autoReload" ${settings.autoReload ? "checked" : ""}>Safe reload</label>
-                    <label><input type="checkbox" data-setting="battleVisuals" ${settings.battleVisuals ? "checked" : ""}>Visual FX</label>
-                </div>
-                <div class="apvp-row">
-                    <label>Skill <input type="number" min="1" max="9" step="1" data-setting="skillNumber" value="${settings.skillNumber}"></label>
-                    <label>Class ${buildClassSelect()}</label>
-                </div>
-                <div class="apvp-status">${escapeHtml(statusText)}</div>
-                ${lastError ? `<div class="apvp-error">${escapeHtml(lastError)}</div>` : ""}
-                <div class="apvp-muted">${escapeHtml(location.pathname)}</div>
-            </div>
-        `;
+
+        syncCheckbox(panel, "enabled", settings.enabled);
+        syncCheckbox(panel, "autoJoin", settings.autoJoin);
+        syncCheckbox(panel, "autoFight", settings.autoFight);
+        syncCheckbox(panel, "autoReload", settings.autoReload);
+        syncCheckbox(panel, "battleVisuals", settings.battleVisuals);
+
+        const skillInput = panel.querySelector('input[data-setting="skillNumber"]');
+        if (skillInput instanceof HTMLInputElement && skillInput.value !== String(settings.skillNumber)) {
+            skillInput.value = String(settings.skillNumber);
+        }
+
+        const classSelect = panel.querySelector('select[data-setting="playerClass"]');
+        if (classSelect instanceof HTMLSelectElement && classSelect.value !== settings.playerClass) {
+            classSelect.value = settings.playerClass;
+        }
+
+        const toggleButton = panel.querySelector('button[data-action="toggle-panel"]');
+        if (toggleButton instanceof HTMLButtonElement) {
+            toggleButton.textContent = settings.expanded ? "Hide" : "Show";
+        }
+
+        const statusNode = panel.querySelector(".apvp-status");
+        if (statusNode) {
+            statusNode.textContent = statusText;
+        }
+
+        const errorNode = panel.querySelector(".apvp-error");
+        if (errorNode) {
+            errorNode.textContent = lastError;
+            errorNode.hidden = !lastError;
+        }
+
+        const pathNode = panel.querySelector(".apvp-muted");
+        if (pathNode) {
+            pathNode.textContent = location.pathname;
+        }
+    }
+
+    function syncCheckbox(panel, settingName, value) {
+        const checkbox = panel.querySelector(`input[type="checkbox"][data-setting="${settingName}"]`);
+        if (checkbox instanceof HTMLInputElement) {
+            checkbox.checked = !!value;
+        }
     }
 
     function handlePanelChange(event) {
@@ -867,7 +920,7 @@
         }
 
         saveSettings();
-        renderPanel();
+        syncPanelState();
         touchProgress();
         scheduleTick();
         scheduleVisualRefresh(80);
@@ -887,7 +940,7 @@
         if (action === "toggle-panel") {
             settings.expanded = !settings.expanded;
             saveSettings();
-            renderPanel();
+            syncPanelState();
             return;
         }
 
@@ -919,13 +972,13 @@
 
     function updateStatus(text) {
         statusText = text;
-        renderPanel();
+        syncPanelState();
     }
 
     function rememberError(error) {
         lastError = String(error);
-        console.error("Auto PvP:", error);
-        renderPanel();
+        console.error("GravyPvP:", error);
+        syncPanelState();
     }
 
     function clearError() {
@@ -933,7 +986,7 @@
             return;
         }
         lastError = "";
-        renderPanel();
+        syncPanelState();
     }
 
     function observePage() {

@@ -1,4 +1,4 @@
-# Auto PvP
+# GravyPvP
 
 Tampermonkey userscript for `demonicscans.org` PvP automation.
 

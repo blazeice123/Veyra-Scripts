@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         GravyPvP
 // @namespace    https://github.com/blazeice123/Veyra-Scripts
-// @version      2.1
+// @version      2.2
 // @description  Auto joins PvP matches, decorates classes with avatars, and adds animated attack effects.
 // @author       SkuLexX
 // @match        https://demonicscans.org/pvp_battle.php*
@@ -35,6 +35,7 @@
             battleVisuals: true,
             skillNumber: 2,
             playerClass: "auto",
+            skillPriorities: {},
             expanded: true
         }
     };
@@ -153,15 +154,42 @@
     function loadSettings() {
         try {
             const stored = JSON.parse(localStorage.getItem(SETTINGS_KEY) || "{}");
-            return { ...CONFIG.defaults, ...stored };
+            return normalizeSettings({ ...CONFIG.defaults, ...stored });
         } catch (error) {
             console.warn("GravyPvP: failed to read settings", error);
-            return { ...CONFIG.defaults };
+            return normalizeSettings({ ...CONFIG.defaults });
         }
     }
 
     function saveSettings() {
+        settings = normalizeSettings(settings);
         localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
+    }
+
+    function normalizeSettings(input) {
+        const normalized = { ...CONFIG.defaults, ...input };
+        normalized.playerClass = normalizeClassKey(normalized.playerClass);
+        normalized.skillNumber = clampSkillNumber(normalized.skillNumber);
+        normalized.skillPriorities = normalizeSkillPriorities(normalized.skillPriorities);
+        return normalized;
+    }
+
+    function normalizeSkillPriorities(priorities) {
+        if (!priorities || typeof priorities !== "object") {
+            return {};
+        }
+
+        const normalized = {};
+        for (const [classKey, values] of Object.entries(priorities)) {
+            if (!Array.isArray(values)) {
+                continue;
+            }
+
+            const safeClassKey = normalizeClassKey(classKey);
+            normalized[safeClassKey] = uniqueSkillNames(values);
+        }
+
+        return normalized;
     }
 
     function installStyles() {
@@ -288,6 +316,72 @@
             }
 
             #${PANEL_ID} .apvp-muted {
+                color: #aeb9c4;
+                font-size: 12px;
+            }
+
+            #${PANEL_ID} .apvp-priority {
+                display: grid;
+                gap: 8px;
+                padding: 8px 10px;
+                background: rgba(255, 255, 255, 0.04);
+                border: 1px solid rgba(255, 255, 255, 0.07);
+                border-radius: 8px;
+            }
+
+            #${PANEL_ID} .apvp-priority-head {
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                gap: 8px;
+                font-size: 12px;
+                color: #cbd5df;
+            }
+
+            #${PANEL_ID} .apvp-priority-list {
+                display: grid;
+                gap: 6px;
+            }
+
+            #${PANEL_ID} .apvp-priority-item {
+                display: grid;
+                grid-template-columns: 20px minmax(0, 1fr) auto;
+                align-items: center;
+                gap: 8px;
+                padding: 6px 7px;
+                background: rgba(0, 0, 0, 0.18);
+                border: 1px solid rgba(255, 255, 255, 0.08);
+                border-radius: 8px;
+            }
+
+            #${PANEL_ID} .apvp-priority-rank {
+                color: #95a8bc;
+                font-size: 12px;
+                text-align: center;
+            }
+
+            #${PANEL_ID} .apvp-priority-name {
+                min-width: 0;
+                overflow: hidden;
+                text-overflow: ellipsis;
+                white-space: nowrap;
+            }
+
+            #${PANEL_ID} .apvp-priority-actions {
+                display: flex;
+                align-items: center;
+                gap: 4px;
+            }
+
+            #${PANEL_ID} .apvp-priority-actions button,
+            #${PANEL_ID} .apvp-priority-head button {
+                min-width: 28px;
+                padding: 4px 7px;
+                background: #223140;
+                border-color: #405163;
+            }
+
+            #${PANEL_ID} .apvp-priority-empty {
                 color: #aeb9c4;
                 font-size: 12px;
             }
@@ -834,9 +928,10 @@
                         <label><input type="checkbox" data-setting="battleVisuals">Visual FX</label>
                     </div>
                     <div class="apvp-row">
-                        <label>Skill <input type="number" min="1" max="9" step="1" data-setting="skillNumber"></label>
+                        <label>Fallback slot <input type="number" min="1" max="9" step="1" data-setting="skillNumber"></label>
                         <label>Class ${buildClassSelect()}</label>
                     </div>
+                    <div class="apvp-priority"></div>
                     <div class="apvp-status"></div>
                     <div class="apvp-error" hidden></div>
                     <div class="apvp-muted"></div>
@@ -891,6 +986,8 @@
         if (pathNode) {
             pathNode.textContent = location.pathname;
         }
+
+        renderSkillPriorityPanel(panel);
     }
 
     function syncCheckbox(panel, settingName, value) {
@@ -898,6 +995,58 @@
         if (checkbox instanceof HTMLInputElement) {
             checkbox.checked = !!value;
         }
+    }
+
+    function renderSkillPriorityPanel(panel) {
+        const container = panel.querySelector(".apvp-priority");
+        if (!container) {
+            return;
+        }
+
+        const classKey = getPriorityClassKey();
+        const profile = getClassProfile(classKey);
+        const priorities = getSkillPriorityList(classKey);
+
+        container.innerHTML = `
+            <div class="apvp-priority-head">
+                <span>Priority for ${escapeHtml(profile.label)}</span>
+                <button type="button" data-action="reset-skills" ${priorities.length ? "" : "disabled"}>Reset</button>
+            </div>
+            <div class="apvp-priority-list">
+                ${priorities.length ? priorities.map((skillName, index) => `
+                    <div class="apvp-priority-item">
+                        <div class="apvp-priority-rank">${index + 1}</div>
+                        <div class="apvp-priority-name" title="${escapeHtml(skillName)}">${escapeHtml(skillName)}</div>
+                        <div class="apvp-priority-actions">
+                            <button type="button" data-action="skill-up" data-index="${index}" ${index === 0 ? "disabled" : ""}>Up</button>
+                            <button type="button" data-action="skill-down" data-index="${index}" ${index === priorities.length - 1 ? "disabled" : ""}>Dn</button>
+                        </div>
+                    </div>
+                `).join("") : `
+                    <div class="apvp-priority-empty">Open a fight and let the skill menu appear once for ${escapeHtml(profile.label)} so GravyPvP can learn the skills.</div>
+                `}
+            </div>
+        `;
+    }
+
+    function getPriorityClassKey() {
+        return getSelectedPlayerClassKey() || "auto";
+    }
+
+    function getSkillPriorityList(classKey) {
+        const priorities = settings.skillPriorities;
+        if (!priorities || typeof priorities !== "object") {
+            return [];
+        }
+
+        const list = priorities[classKey];
+        if (!Array.isArray(list)) {
+            return [];
+        }
+
+        return list
+            .map((skillName) => String(skillName || "").trim())
+            .filter(Boolean);
     }
 
     function handlePanelChange(event) {
@@ -947,6 +1096,17 @@
         if (action === "run-now") {
             updateStatus("Manual run requested");
             scheduleTick(10);
+            return;
+        }
+
+        if (action === "skill-up" || action === "skill-down") {
+            const index = Number.parseInt(target.dataset.index || "", 10);
+            moveSkillPriority(index, action === "skill-up" ? -1 : 1);
+            return;
+        }
+
+        if (action === "reset-skills") {
+            resetSkillPriority();
         }
     }
 
@@ -968,6 +1128,35 @@
 
     function normalizeClassKey(value) {
         return CLASS_KEYS.includes(value) ? value : "auto";
+    }
+
+    function moveSkillPriority(index, direction) {
+        const classKey = getPriorityClassKey();
+        const skills = getSkillPriorityList(classKey);
+        const nextIndex = index + direction;
+
+        if (!Number.isInteger(index) || index < 0 || nextIndex < 0 || nextIndex >= skills.length) {
+            return;
+        }
+
+        const reordered = [...skills];
+        const [moved] = reordered.splice(index, 1);
+        reordered.splice(nextIndex, 0, moved);
+        settings.skillPriorities[classKey] = reordered;
+        saveSettings();
+        syncPanelState();
+    }
+
+    function resetSkillPriority() {
+        const classKey = getPriorityClassKey();
+        if (!settings.skillPriorities?.[classKey]) {
+            return;
+        }
+
+        delete settings.skillPriorities[classKey];
+        saveSettings();
+        syncPanelState();
+        updateStatus(`Cleared saved skill order for ${getClassProfile(classKey).label}`);
     }
 
     function updateStatus(text) {
@@ -1063,6 +1252,13 @@
         try {
             renderPanel();
             refreshBattleVisuals();
+
+            if (isBattlePage()) {
+                const visibleSkillButtons = getSkillButtons();
+                if (visibleSkillButtons.length) {
+                    rememberSkillButtons(visibleSkillButtons);
+                }
+            }
 
             if (!settings.enabled) {
                 updateStatus("Paused");
@@ -1255,9 +1451,9 @@
                 return;
             }
 
-            const preferredButton = buttons[settings.skillNumber - 1];
             const enabledButtons = buttons.filter(isClickable);
-            const chosenButton = isClickable(preferredButton) ? preferredButton : enabledButtons[0];
+            rememberSkillButtons(buttons);
+            const chosenButton = chooseSkillButton(buttons, enabledButtons);
 
             if (!chosenButton) {
                 closeSkillModal();
@@ -1273,6 +1469,64 @@
                 }, CONFIG.actionCooldownMs);
             }
         }
+    }
+
+    function rememberSkillButtons(buttons) {
+        const classKey = getPriorityClassKey();
+        const seenNames = uniqueSkillNames(buttons.map((button) => getButtonLabel(button)));
+        if (!seenNames.length) {
+            return;
+        }
+
+        const savedNames = getSkillPriorityList(classKey);
+        const mergedNames = [
+            ...savedNames,
+            ...seenNames.filter((skillName) => !savedNames.includes(skillName))
+        ];
+
+        if (savedNames.length === mergedNames.length && savedNames.every((skillName, index) => skillName === mergedNames[index])) {
+            return;
+        }
+
+        settings.skillPriorities[classKey] = mergedNames;
+        saveSettings();
+        syncPanelState();
+    }
+
+    function chooseSkillButton(buttons, enabledButtons) {
+        const classKey = getPriorityClassKey();
+        const priorities = getSkillPriorityList(classKey);
+
+        for (const skillName of priorities) {
+            const matchingButton = buttons.find((button) => isClickable(button) && getButtonLabel(button) === skillName);
+            if (matchingButton) {
+                return matchingButton;
+            }
+        }
+
+        const fallbackButton = buttons[settings.skillNumber - 1];
+        if (isClickable(fallbackButton)) {
+            return fallbackButton;
+        }
+
+        return enabledButtons[0] || null;
+    }
+
+    function uniqueSkillNames(skillNames) {
+        const seen = new Set();
+        const unique = [];
+
+        for (const skillName of skillNames) {
+            const normalized = String(skillName || "").trim();
+            if (!normalized || seen.has(normalized)) {
+                continue;
+            }
+
+            seen.add(normalized);
+            unique.push(normalized);
+        }
+
+        return unique;
     }
 
     function installInteractionHooks() {

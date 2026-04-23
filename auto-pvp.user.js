@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         GravyPvP
 // @namespace    https://github.com/blazeice123/Veyra-Scripts
-// @version      2.3
+// @version      2.5
 // @description  Auto joins PvP matches, decorates classes with avatars, and adds animated attack effects.
 // @author       SkuLexX
 // @match        https://demonicscans.org/pvp_battle.php*
@@ -20,13 +20,21 @@
     const PANEL_ID = "gravy-pvp-panel";
     const STYLE_ID = "gravy-pvp-style";
     const STAGE_ID = "gravy-pvp-stage";
+    const WORKER_HOST_ID = "gravy-pvp-worker-host";
     const SETTINGS_KEY = "gravy_pvp_settings_v1";
+    const WORKER_REPORT_KEY = "gravy_pvp_worker_report_v1";
+    const WORKER_SESSION_KEY = "gravy_pvp_worker_session_v1";
     const CLASS_KEYS = ["auto", "warrior", "mage", "ranger", "rogue", "healer", "paladin", "necromancer", "monk", "berserker", "shadow"];
+    const LAUNCH_FLAGS = parseLaunchFlags();
+    const WORKER_MODE = LAUNCH_FLAGS.worker === "1";
+    const WORKER_SESSION_ID = String(LAUNCH_FLAGS.session || "").trim();
     const CONFIG = {
         tickMs: 1200,
         actionCooldownMs: 1000,
         joinCooldownMs: 4000,
         staleReloadMs: 180000,
+        workerHeartbeatMs: 1500,
+        workerStaleMs: 12000,
         defaults: {
             enabled: true,
             autoJoin: true,
@@ -120,6 +128,9 @@
     let observer = null;
     let lastTargetSlot = null;
     let hooksInstalled = false;
+    let battlePageEnteredAt = isBattlePage() ? Date.now() : 0;
+    let workerFrame = null;
+    let workerSession = !WORKER_MODE ? String(localStorage.getItem(WORKER_SESSION_KEY) || "").trim() : WORKER_SESSION_ID;
 
     window.addEventListener("error", (event) => {
         const message = event?.error?.message || event?.message || "Unknown script error";
@@ -131,16 +142,26 @@
         rememberError(reason);
     });
 
+    window.addEventListener("beforeunload", () => {
+        if (WORKER_MODE) {
+            publishWorkerReport("navigating", statusText || "Navigating");
+        }
+    });
+
     onReady(() => {
-        installStyles();
-        renderPanel();
+        if (!WORKER_MODE) {
+            installStyles();
+            renderPanel();
+            installInteractionHooks();
+            window.addEventListener("resize", () => scheduleVisualRefresh(80));
+        }
         observePage();
-        installInteractionHooks();
-        refreshBattleVisuals();
         tick();
         window.setInterval(tick, CONFIG.tickMs);
         window.setInterval(runWatchdog, 5000);
-        window.addEventListener("resize", () => scheduleVisualRefresh(80));
+        if (WORKER_MODE) {
+            publishWorkerReport("starting", "Background worker ready");
+        }
     });
 
     function onReady(callback) {
@@ -329,6 +350,15 @@
 
             #${PANEL_ID} .apvp-muted {
                 color: #aeb9c4;
+                font-size: 12px;
+            }
+
+            #${PANEL_ID} .apvp-worker {
+                padding: 8px 10px;
+                color: #c9d8e7;
+                background: rgba(88, 132, 255, 0.10);
+                border: 1px solid rgba(111, 144, 255, 0.24);
+                border-radius: 8px;
                 font-size: 12px;
             }
 
@@ -940,6 +970,11 @@
                         <button type="button" data-action="run-now">Run now</button>
                     </div>
                     <div class="apvp-row">
+                        <button type="button" data-action="start-worker">Start BG</button>
+                        <button type="button" data-action="stop-worker">Stop BG</button>
+                    </div>
+                    <div class="apvp-worker"></div>
+                    <div class="apvp-row">
                         <label><input type="checkbox" data-setting="autoJoin">Auto join</label>
                         <label><input type="checkbox" data-setting="autoFight">Auto fight</label>
                     </div>
@@ -994,6 +1029,21 @@
         const statusNode = panel.querySelector(".apvp-status");
         if (statusNode) {
             statusNode.textContent = statusText;
+        }
+
+        const workerNode = panel.querySelector(".apvp-worker");
+        if (workerNode) {
+            workerNode.textContent = getWorkerSummaryText();
+        }
+
+        const startWorkerButton = panel.querySelector('button[data-action="start-worker"]');
+        if (startWorkerButton instanceof HTMLButtonElement) {
+            startWorkerButton.disabled = isBackgroundWorkerRunning();
+        }
+
+        const stopWorkerButton = panel.querySelector('button[data-action="stop-worker"]');
+        if (stopWorkerButton instanceof HTMLButtonElement) {
+            stopWorkerButton.disabled = !isBackgroundWorkerRunning();
         }
 
         const errorNode = panel.querySelector(".apvp-error");
@@ -1119,6 +1169,16 @@
             return;
         }
 
+        if (action === "start-worker") {
+            startBackgroundWorker();
+            return;
+        }
+
+        if (action === "stop-worker") {
+            stopBackgroundWorker("Stopped hidden background worker");
+            return;
+        }
+
         if (action === "skill-up" || action === "skill-down") {
             const index = Number.parseInt(target.dataset.index || "", 10);
             moveSkillPriority(index, action === "skill-up" ? -1 : 1);
@@ -1179,14 +1239,164 @@
         updateStatus(`Cleared saved skill order for ${getClassProfile(classKey).label}`);
     }
 
+    function parseLaunchFlags() {
+        const hash = String(window.location.hash || "").replace(/^#/, "");
+        const params = new URLSearchParams(hash);
+        const nameMatch = String(window.name || "").match(/^gravy-worker:(.+)$/);
+        return {
+            worker: params.get("gravy-worker") || (nameMatch ? "1" : ""),
+            session: params.get("gravy-session") || (nameMatch ? nameMatch[1] : "")
+        };
+    }
+
+    function ensureHiddenWorkerHost() {
+        let host = document.getElementById(WORKER_HOST_ID);
+        if (host) {
+            return host;
+        }
+
+        host = document.createElement("div");
+        host.id = WORKER_HOST_ID;
+        host.setAttribute("aria-hidden", "true");
+        host.style.cssText = "position:fixed;left:-99999px;top:-99999px;width:1px;height:1px;overflow:hidden;opacity:0;pointer-events:none;z-index:-1;";
+        document.body.appendChild(host);
+        return host;
+    }
+
+    function createHiddenWorkerFrame(urlValue, frameName = "") {
+        const host = ensureHiddenWorkerHost();
+        const frame = document.createElement("iframe");
+        if (frameName) {
+            frame.name = frameName;
+        }
+        frame.src = String(urlValue || "");
+        frame.setAttribute("aria-hidden", "true");
+        frame.tabIndex = -1;
+        frame.style.cssText = "position:absolute;left:-99999px;top:-99999px;width:1px;height:1px;border:0;opacity:0;pointer-events:none;";
+        host.appendChild(frame);
+        return frame;
+    }
+
+    function buildWorkerSessionId() {
+        return `gravy-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+    }
+
+    function startBackgroundWorker() {
+        if (WORKER_MODE || isBackgroundWorkerRunning()) {
+            syncPanelState();
+            return;
+        }
+
+        const sessionId = buildWorkerSessionId();
+        workerSession = sessionId;
+        localStorage.setItem(WORKER_SESSION_KEY, sessionId);
+        publishWorkerReport("starting", "Launching hidden background worker", sessionId);
+
+        const url = new URL("https://demonicscans.org/pvp.php");
+        url.hash = `gravy-worker=1&gravy-session=${encodeURIComponent(sessionId)}`;
+        workerFrame = createHiddenWorkerFrame(url.toString(), `gravy-worker:${sessionId}`);
+        updateStatus("Started hidden background worker");
+    }
+
+    function stopBackgroundWorker(message = "Stopped hidden background worker") {
+        if (workerFrame) {
+            workerFrame.remove();
+            workerFrame = null;
+        }
+
+        const sessionId = workerSession || String(localStorage.getItem(WORKER_SESSION_KEY) || "").trim();
+        if (sessionId) {
+            publishWorkerReport("stopped", message, sessionId);
+        }
+
+        workerSession = "";
+        localStorage.removeItem(WORKER_SESSION_KEY);
+        updateStatus(message);
+    }
+
+    function readWorkerReport() {
+        try {
+            const raw = localStorage.getItem(WORKER_REPORT_KEY);
+            if (!raw) {
+                return null;
+            }
+
+            const parsed = JSON.parse(raw);
+            if (!parsed || typeof parsed !== "object") {
+                return null;
+            }
+
+            return parsed;
+        } catch (error) {
+            return null;
+        }
+    }
+
+    function publishWorkerReport(phase, detail, sessionOverride = "") {
+        const sessionId = String(sessionOverride || workerSession || WORKER_SESSION_ID || "").trim();
+        if (!sessionId) {
+            return;
+        }
+
+        localStorage.setItem(WORKER_REPORT_KEY, JSON.stringify({
+            sessionId,
+            phase,
+            detail: String(detail || ""),
+            path: `${location.pathname}${location.search}`,
+            updatedAt: Date.now()
+        }));
+    }
+
+    function getCurrentWorkerState() {
+        const report = readWorkerReport();
+        const sessionId = String(workerSession || localStorage.getItem(WORKER_SESSION_KEY) || "").trim();
+        if (!sessionId) {
+            return { active: false, text: "Background worker idle" };
+        }
+
+        const matchingReport = report && report.sessionId === sessionId ? report : null;
+        const fresh = matchingReport
+            && (Date.now() - Number(matchingReport.updatedAt || 0)) <= CONFIG.workerStaleMs
+            && matchingReport.phase !== "stopped";
+
+        if (workerFrame?.isConnected || fresh) {
+            const detail = matchingReport?.detail || "Background worker active";
+            const path = matchingReport?.path ? ` on ${matchingReport.path}` : "";
+            return {
+                active: true,
+                text: `${detail}${path}`
+            };
+        }
+
+        return { active: false, text: "Background worker idle" };
+    }
+
+    function getWorkerSummaryText() {
+        return getCurrentWorkerState().text;
+    }
+
+    function isBackgroundWorkerRunning() {
+        return getCurrentWorkerState().active;
+    }
+
     function updateStatus(text) {
         statusText = text;
+        if (WORKER_MODE) {
+            publishWorkerReport("running", text);
+            return;
+        }
+
         syncPanelState();
     }
 
     function rememberError(error) {
         lastError = String(error);
         console.error("GravyPvP:", error);
+        if (WORKER_MODE) {
+            publishWorkerReport("error", lastError);
+            return;
+        }
+
         syncPanelState();
     }
 
@@ -1195,7 +1405,9 @@
             return;
         }
         lastError = "";
-        syncPanelState();
+        if (!WORKER_MODE) {
+            syncPanelState();
+        }
     }
 
     function observePage() {
@@ -1213,7 +1425,7 @@
             scheduleTick(250);
             scheduleVisualRefresh(140);
 
-            if (!document.getElementById(PANEL_ID)) {
+            if (!WORKER_MODE && !document.getElementById(PANEL_ID)) {
                 renderPanel();
             }
         });
@@ -1270,18 +1482,35 @@
 
     async function tick() {
         try {
-            renderPanel();
-            refreshBattleVisuals();
+            if (!WORKER_MODE) {
+                renderPanel();
+                refreshBattleVisuals();
+            }
 
             if (isBattlePage()) {
+                if (!battlePageEnteredAt) {
+                    battlePageEnteredAt = Date.now();
+                }
+
                 const visibleSkillButtons = getSkillButtons();
                 if (visibleSkillButtons.length) {
                     rememberSkillButtons(visibleSkillButtons);
                 }
+            } else {
+                battlePageEnteredAt = 0;
             }
 
             if (!settings.enabled) {
                 updateStatus("Paused");
+                return;
+            }
+
+            if (!WORKER_MODE && isBackgroundWorkerRunning()) {
+                if (statusText !== getWorkerSummaryText()) {
+                    updateStatus(getWorkerSummaryText());
+                } else {
+                    syncPanelState();
+                }
                 return;
             }
 
@@ -1312,6 +1541,12 @@
     async function handleLobbyPage() {
         clearError();
 
+        const continueButton = findClickableElementByText([
+            "continue solo match",
+            "continue match",
+            "resume match",
+            "resume battle"
+        ]);
         const joinButton = findVisibleElement([
             ".action-btn.js-matchmake",
             ".js-matchmake",
@@ -1325,6 +1560,11 @@
 
         if (!settings.autoJoin) {
             updateStatus(`Lobby: ${tokenLabel}`);
+            return;
+        }
+
+        if (continueButton) {
+            clickElement(continueButton, "Continuing solo match");
             return;
         }
 
@@ -1397,13 +1637,22 @@
             return false;
         }
 
-        const enemyAlive = getEnemySlots().length;
-        const allyAlive = getAllySlots().length;
         const resultBannerVisible = hasResultBanner();
-        const enemyContainerKnown = hasTeamContainer(ENEMY_CONTAINER_SELECTORS);
-        const allyContainerKnown = hasTeamContainer(ALLY_CONTAINER_SELECTORS);
-        const enemyDefeated = enemyContainerKnown && enemyAlive === 0;
-        const allyDefeated = allyContainerKnown && allyAlive === 0;
+        const attackButton = findAttackButton();
+        const skillButtons = getSkillButtons();
+        const enemySlots = getVisibleTeamSlots(ENEMY_CONTAINER_SELECTORS);
+        const allySlots = getVisibleTeamSlots(ALLY_CONTAINER_SELECTORS);
+        const enemyDefeated = areAllTeamSlotsMarkedDead(enemySlots);
+        const allyDefeated = areAllTeamSlotsMarkedDead(allySlots);
+        const pageSettled = battlePageEnteredAt > 0 && Date.now() - battlePageEnteredAt >= 2500;
+
+        if (!resultBannerVisible && !pageSettled) {
+            return false;
+        }
+
+        if (!resultBannerVisible && (skillButtons.length || attackButton)) {
+            return false;
+        }
 
         if (!resultBannerVisible && !enemyDefeated && !allyDefeated) {
             return false;
@@ -1651,6 +1900,12 @@
         }
 
         return [];
+    }
+
+    function areAllTeamSlotsMarkedDead(slots) {
+        return Array.isArray(slots)
+            && slots.length > 0
+            && slots.every((slot) => slot instanceof HTMLElement && slot.dataset.alive === "0");
     }
 
     function renderSlotVisual(slot) {
@@ -2369,6 +2624,16 @@
         return null;
     }
 
+    function findClickableElementByText(patterns) {
+        const candidates = Array.from(document.querySelectorAll("button, a, .btn, [role='button']"))
+            .filter(isClickable);
+
+        return candidates.find((element) => {
+            const text = getButtonLabel(element).toLowerCase();
+            return patterns.some((pattern) => text.includes(String(pattern).toLowerCase()));
+        }) || null;
+    }
+
     function isClickable(element) {
         if (!(element instanceof HTMLElement)) {
             return false;
@@ -2417,7 +2682,7 @@
     }
 
     function runWatchdog() {
-        if (!settings.enabled || !settings.autoReload || document.hidden) {
+        if (!settings.enabled || !settings.autoReload || (!WORKER_MODE && document.hidden)) {
             return;
         }
 

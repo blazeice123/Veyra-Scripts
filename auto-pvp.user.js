@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         GravyPvP
 // @namespace    https://github.com/blazeice123/Veyra-Scripts
-// @version      3.0
+// @version      3.2
 // @description  Auto joins PvP matches, decorates classes with avatars, and adds animated attack effects.
 // @author       SkuLexX
 // @match        https://demonicscans.org/pvp_battle.php*
@@ -30,7 +30,7 @@
     const LAUNCH_FLAGS = parseLaunchFlags();
     const WORKER_MODE = LAUNCH_FLAGS.worker === "1";
     const WORKER_SESSION_ID = String(LAUNCH_FLAGS.session || "").trim();
-    const SCRIPT_VERSION = "3.0";
+    const SCRIPT_VERSION = "3.2";
     const CONFIG = {
         tickMs: 1200,
         actionCooldownMs: 1000,
@@ -66,7 +66,7 @@
     const CLASS_PROFILES = {
         adventurer: {
             label: "Adventurer",
-            effect: "arcane",
+            effect: "slash",
             colors: ["#83b8ff", "#e7f1ff"]
         },
         warrior: {
@@ -76,17 +76,17 @@
         },
         mage: {
             label: "Mage",
-            effect: "arcane",
+            effect: "arcane-burst",
             colors: ["#4fc3ff", "#a57cff"]
         },
         ranger: {
             label: "Ranger",
-            effect: "projectile",
+            effect: "arrow-shot",
             colors: ["#67d77e", "#d4ff7a"]
         },
         rogue: {
             label: "Rogue",
-            effect: "shadow",
+            effect: "shadow-reap",
             colors: ["#7bd8ff", "#9fb7ff"]
         },
         healer: {
@@ -96,30 +96,46 @@
         },
         paladin: {
             label: "Paladin",
-            effect: "holy",
+            effect: "holy-smite",
             colors: ["#ffd76b", "#fff5bf"]
         },
         necromancer: {
             label: "Necromancer",
-            effect: "shadow",
+            effect: "shadow-reap",
             colors: ["#b77dff", "#56d69f"]
         },
         monk: {
             label: "Monk",
-            effect: "impact",
+            effect: "martial-impact",
             colors: ["#ffbf72", "#ffe99e"]
         },
         berserker: {
             label: "Berserker",
-            effect: "slash",
+            effect: "power-slash",
             colors: ["#ff5d68", "#ffb56b"]
         },
         shadow: {
             label: "Shadow",
-            effect: "shadow",
+            effect: "shadow-reap",
             colors: ["#7f86a7", "#c0a6ff"]
         }
     };
+    const SKILL_EFFECT_PATTERNS = [
+        { effect: "arcane-sacrifice", test: /\b(arcane|mana|soul|blood)\s+sacrifice\b|\bsacrifice\b/ },
+        { effect: "power-slash", test: /\b(power|heavy|brutal|fatal|mighty|wild|great)\s+(slash|strike|cleave)\b|\bcleave\b|\brend\b|\bcrusher\b|\bexecution\b/ },
+        { effect: "fireball", test: /\bfireball\b|\bflame\s+orb\b|\bember\s+ball\b|\bfire\s+blast\b/ },
+        { effect: "meteor", test: /\bmeteor\b|\binferno\b|\bcataclysm\b|\bstarfall\b/ },
+        { effect: "frost-spike", test: /\b(frost|ice|blizzard|glacier|freeze|icy)\b/ },
+        { effect: "heal", test: /\b(heal|mend|recover|renew|restore|regen|cure|rejuven|recovery|revive)\b/ },
+        { effect: "holy-smite", test: /\b(holy|smite|judg|light|divine|radiant|sanct|blessing)\b/ },
+        { effect: "poison-dart", test: /\b(poison|venom|toxic|acid|plague)\b/ },
+        { effect: "shadow-reap", test: /\b(shadow|void|curse|doom|drain|reap|phantom|dark|soul)\b/ },
+        { effect: "arrow-volley", test: /\b(volley|barrage|multishot|multi-shot|rain of arrows)\b/ },
+        { effect: "arrow-shot", test: /\b(arrow|shot|snipe|pierce|bolt|throw|dart)\b/ },
+        { effect: "martial-impact", test: /\b(combo|punch|kick|fist|palm|jab|uppercut|roundhouse|chi)\b/ },
+        { effect: "arcane-burst", test: /\b(arcane|magic|mana|spell|blast|burst|orb|missile)\b/ },
+        { effect: "slash", test: /\b(slash|strike|stab|cut|slice|lunge)\b/ }
+    ];
     const SETTING_HELP = {
         enabled: "Master switch for GravyPvP. Start turns this on for you, and Stop turns it off for you.",
         autoJoin: "Automatically continue a solo match or join PvP when the hidden worker is running.",
@@ -150,11 +166,19 @@
     let battleOutcomeHandled = false;
 
     window.addEventListener("error", (event) => {
+        if (!shouldCaptureGlobalError(event?.error, event?.filename, event?.message)) {
+            return;
+        }
+
         const message = event?.error?.message || event?.message || "Unknown script error";
         rememberError(message);
     });
 
     window.addEventListener("unhandledrejection", (event) => {
+        if (!shouldCaptureGlobalError(event?.reason, "", event?.reason?.message || event?.reason)) {
+            return;
+        }
+
         const reason = event?.reason?.message || String(event?.reason || "Unhandled rejection");
         rememberError(reason);
     });
@@ -290,6 +314,17 @@
         battleStats.lastOutcome = outcome;
         battleStats.updatedAt = Date.now();
         saveBattleStats();
+    }
+
+    function shouldCaptureGlobalError(errorLike, filename = "", fallbackMessage = "") {
+        const parts = [
+            String(filename || ""),
+            String(fallbackMessage || ""),
+            String(errorLike?.message || ""),
+            String(errorLike?.stack || "")
+        ].join("\n");
+
+        return /auto-pvp\.user\.js|gravypvp/i.test(parts);
     }
 
     function installStyles() {
@@ -762,12 +797,45 @@
                 animation: apvp-slash 0.44s ease-out forwards;
             }
 
+            #${PANEL_ID} .apvp-preview-effect[data-effect="power-slash"]::before,
+            #${PANEL_ID} .apvp-preview-effect[data-effect="power-slash"]::after {
+                border-radius: 999px;
+            }
+
+            #${PANEL_ID} .apvp-preview-effect[data-effect="power-slash"]::before {
+                left: -2px;
+                top: 17px;
+                width: 96px;
+                height: 12px;
+                background: linear-gradient(90deg, transparent, #ff6d55 16%, #ffe78b 54%, transparent);
+                box-shadow: 0 0 18px rgba(255, 142, 96, 0.6);
+                animation: apvp-power-slash-main 0.5s ease-out forwards;
+            }
+
+            #${PANEL_ID} .apvp-preview-effect[data-effect="power-slash"]::after {
+                left: 18px;
+                top: 29px;
+                width: 68px;
+                height: 8px;
+                background: linear-gradient(90deg, transparent, rgba(255, 197, 112, 0.95) 36%, transparent);
+                box-shadow: 0 0 12px rgba(255, 190, 106, 0.45);
+                animation: apvp-power-slash-trail 0.52s ease-out forwards;
+            }
+
+            #${PANEL_ID} .apvp-preview-effect[data-effect="arrow-shot"]::before,
             #${PANEL_ID} .apvp-preview-effect[data-effect="projectile"]::before,
+            #${PANEL_ID} .apvp-preview-effect[data-effect="arcane-burst"]::before,
             #${PANEL_ID} .apvp-preview-effect[data-effect="arcane"]::before,
+            #${PANEL_ID} .apvp-preview-effect[data-effect="fireball"]::before,
             #${PANEL_ID} .apvp-preview-effect[data-effect="fire"]::before,
+            #${PANEL_ID} .apvp-preview-effect[data-effect="frost-spike"]::before,
             #${PANEL_ID} .apvp-preview-effect[data-effect="ice"]::before,
+            #${PANEL_ID} .apvp-preview-effect[data-effect="shadow-reap"]::before,
             #${PANEL_ID} .apvp-preview-effect[data-effect="shadow"]::before,
-            #${PANEL_ID} .apvp-preview-effect[data-effect="holy"]::before {
+            #${PANEL_ID} .apvp-preview-effect[data-effect="holy-smite"]::before,
+            #${PANEL_ID} .apvp-preview-effect[data-effect="holy"]::before,
+            #${PANEL_ID} .apvp-preview-effect[data-effect="meteor"]::before,
+            #${PANEL_ID} .apvp-preview-effect[data-effect="poison-dart"]::before {
                 left: 0;
                 top: 24px;
                 width: 90px;
@@ -778,24 +846,76 @@
                 animation: apvp-beam 0.52s ease-out forwards;
             }
 
-            #${PANEL_ID} .apvp-preview-effect[data-effect="fire"]::before {
-                background: linear-gradient(90deg, transparent, #ff744e 22%, #ffd56e 50%, transparent);
-                box-shadow: 0 0 14px rgba(255, 148, 96, 0.55);
+            #${PANEL_ID} .apvp-preview-effect[data-effect="arcane-burst"]::before,
+            #${PANEL_ID} .apvp-preview-effect[data-effect="arcane"]::before {
+                background: linear-gradient(90deg, transparent, #8c8bff 22%, #f7fbff 50%, transparent);
+                box-shadow: 0 0 14px rgba(149, 122, 255, 0.55);
             }
 
+            #${PANEL_ID} .apvp-preview-effect[data-effect="fireball"]::before,
+            #${PANEL_ID} .apvp-preview-effect[data-effect="fire"]::before {
+                left: 8px;
+                top: 15px;
+                width: 24px;
+                height: 24px;
+                border-radius: 50%;
+                background: radial-gradient(circle, #fff0cd 0 16%, #ffbf63 17% 42%, #ff6a45 43% 70%, rgba(255, 106, 69, 0.08) 71%);
+                box-shadow: 0 0 18px rgba(255, 129, 79, 0.58);
+                animation: apvp-fireball-flight 0.54s ease-out forwards;
+            }
+
+            #${PANEL_ID} .apvp-preview-effect[data-effect="frost-spike"]::before,
             #${PANEL_ID} .apvp-preview-effect[data-effect="ice"]::before {
                 background: linear-gradient(90deg, transparent, #6cd9ff 22%, #f0ffff 50%, transparent);
                 box-shadow: 0 0 14px rgba(108, 217, 255, 0.55);
             }
 
+            #${PANEL_ID} .apvp-preview-effect[data-effect="shadow-reap"]::before,
             #${PANEL_ID} .apvp-preview-effect[data-effect="shadow"]::before {
                 background: linear-gradient(90deg, transparent, #7b73ff 22%, #6fe2bb 50%, transparent);
                 box-shadow: 0 0 14px rgba(123, 115, 255, 0.55);
             }
 
+            #${PANEL_ID} .apvp-preview-effect[data-effect="holy-smite"]::before,
             #${PANEL_ID} .apvp-preview-effect[data-effect="holy"]::before {
                 background: linear-gradient(90deg, transparent, #ffd86b 22%, #fff7d1 50%, transparent);
                 box-shadow: 0 0 14px rgba(255, 216, 107, 0.55);
+            }
+
+            #${PANEL_ID} .apvp-preview-effect[data-effect="arrow-shot"]::before,
+            #${PANEL_ID} .apvp-preview-effect[data-effect="projectile"]::before {
+                top: 25px;
+                height: 4px;
+                background: linear-gradient(90deg, transparent, #82f79f 18%, #f6ffcf 46%, transparent);
+                box-shadow: 0 0 12px rgba(130, 247, 159, 0.48);
+            }
+
+            #${PANEL_ID} .apvp-preview-effect[data-effect="poison-dart"]::before {
+                top: 25px;
+                height: 4px;
+                background: linear-gradient(90deg, transparent, #3fd871 16%, #d8ff7a 44%, transparent);
+                box-shadow: 0 0 12px rgba(63, 216, 113, 0.48);
+            }
+
+            #${PANEL_ID} .apvp-preview-effect[data-effect="arcane-sacrifice"]::before,
+            #${PANEL_ID} .apvp-preview-effect[data-effect="arcane-sacrifice"]::after,
+            #${PANEL_ID} .apvp-preview-effect[data-effect="fireball"]::after,
+            #${PANEL_ID} .apvp-preview-effect[data-effect="fire"]::after,
+            #${PANEL_ID} .apvp-preview-effect[data-effect="meteor"]::after,
+            #${PANEL_ID} .apvp-preview-effect[data-effect="frost-spike"]::after,
+            #${PANEL_ID} .apvp-preview-effect[data-effect="ice"]::after,
+            #${PANEL_ID} .apvp-preview-effect[data-effect="shadow-reap"]::after,
+            #${PANEL_ID} .apvp-preview-effect[data-effect="shadow"]::after,
+            #${PANEL_ID} .apvp-preview-effect[data-effect="holy-smite"]::after,
+            #${PANEL_ID} .apvp-preview-effect[data-effect="holy"]::after,
+            #${PANEL_ID} .apvp-preview-effect[data-effect="arrow-shot"]::after,
+            #${PANEL_ID} .apvp-preview-effect[data-effect="projectile"]::after,
+            #${PANEL_ID} .apvp-preview-effect[data-effect="arrow-volley"]::before,
+            #${PANEL_ID} .apvp-preview-effect[data-effect="arrow-volley"]::after,
+            #${PANEL_ID} .apvp-preview-effect[data-effect="martial-impact"]::before,
+            #${PANEL_ID} .apvp-preview-effect[data-effect="martial-impact"]::after,
+            #${PANEL_ID} .apvp-preview-effect[data-effect="poison-dart"]::after {
+                opacity: 0;
             }
 
             #${PANEL_ID} .apvp-preview-effect[data-effect="heal"]::before,
@@ -821,6 +941,31 @@
                 background: radial-gradient(circle, #fffed2 0 28%, #7fffd4 29% 70%, transparent 74%);
             }
 
+            #${PANEL_ID} .apvp-preview-effect[data-effect="martial-impact"]::before,
+            #${PANEL_ID} .apvp-preview-effect[data-effect="martial-impact"]::after,
+            #${PANEL_ID} .apvp-preview-effect[data-effect="impact"]::before {
+                border-radius: 50%;
+            }
+
+            #${PANEL_ID} .apvp-preview-effect[data-effect="martial-impact"]::before {
+                left: 30px;
+                top: 7px;
+                width: 28px;
+                height: 28px;
+                background: radial-gradient(circle, #fff4e1 0 24%, #ffb55f 25% 52%, rgba(255, 181, 95, 0.18) 53% 76%, transparent 77%);
+                box-shadow: 0 0 18px rgba(255, 181, 95, 0.45);
+                animation: apvp-impact-burst 0.48s ease-out forwards;
+            }
+
+            #${PANEL_ID} .apvp-preview-effect[data-effect="martial-impact"]::after {
+                left: 20px;
+                top: 15px;
+                width: 50px;
+                height: 12px;
+                background: linear-gradient(90deg, transparent, rgba(255, 201, 120, 0.9) 42%, transparent);
+                animation: apvp-impact-wave 0.46s ease-out forwards;
+            }
+
             #${PANEL_ID} .apvp-preview-effect[data-effect="impact"]::before {
                 left: 34px;
                 top: 10px;
@@ -830,6 +975,152 @@
                 background: radial-gradient(circle, #fff3d8 0 30%, #ffb45a 31% 68%, transparent 72%);
                 box-shadow: 0 0 16px rgba(255, 180, 90, 0.45);
                 animation: apvp-pop 0.46s ease-out forwards;
+            }
+
+            #${PANEL_ID} .apvp-preview-effect[data-effect="fireball"]::after,
+            #${PANEL_ID} .apvp-preview-effect[data-effect="fire"]::after {
+                left: 62px;
+                top: 12px;
+                width: 24px;
+                height: 24px;
+                border-radius: 50%;
+                background: radial-gradient(circle, #fff2cb 0 20%, #ff9b4a 21% 52%, rgba(255, 104, 54, 0.9) 53% 70%, transparent 72%);
+                box-shadow: 0 0 18px rgba(255, 137, 75, 0.52);
+                animation: apvp-fireball-burst 0.55s ease-out forwards;
+            }
+
+            #${PANEL_ID} .apvp-preview-effect[data-effect="meteor"]::before {
+                top: 10px;
+                height: 8px;
+                background: linear-gradient(90deg, transparent, #ff7a49 18%, #ffe07c 46%, transparent);
+                box-shadow: 0 0 18px rgba(255, 128, 90, 0.62);
+                animation: apvp-meteor-flight 0.58s ease-out forwards;
+            }
+
+            #${PANEL_ID} .apvp-preview-effect[data-effect="meteor"]::after {
+                left: 60px;
+                top: 6px;
+                width: 28px;
+                height: 28px;
+                border-radius: 50%;
+                background: radial-gradient(circle, #fff5d4 0 18%, #ffb150 19% 46%, rgba(255, 82, 52, 0.9) 47% 70%, transparent 72%);
+                box-shadow: 0 0 22px rgba(255, 112, 72, 0.55);
+                animation: apvp-fireball-burst 0.62s ease-out forwards;
+            }
+
+            #${PANEL_ID} .apvp-preview-effect[data-effect="frost-spike"]::after,
+            #${PANEL_ID} .apvp-preview-effect[data-effect="ice"]::after {
+                left: 66px;
+                top: 10px;
+                width: 18px;
+                height: 32px;
+                background: linear-gradient(180deg, rgba(255, 255, 255, 0.92), rgba(109, 219, 255, 0.95));
+                clip-path: polygon(50% 0, 100% 34%, 76% 100%, 24% 100%, 0 34%);
+                box-shadow: 0 0 18px rgba(111, 222, 255, 0.4);
+                animation: apvp-frost-spike 0.56s ease-out forwards;
+            }
+
+            #${PANEL_ID} .apvp-preview-effect[data-effect="shadow-reap"]::after,
+            #${PANEL_ID} .apvp-preview-effect[data-effect="shadow"]::after {
+                left: 44px;
+                top: 5px;
+                width: 32px;
+                height: 32px;
+                border: 4px solid rgba(149, 124, 255, 0.95);
+                border-right-color: transparent;
+                border-bottom-color: transparent;
+                border-radius: 50%;
+                box-shadow: 0 0 18px rgba(149, 124, 255, 0.38);
+                transform: rotate(-20deg);
+                animation: apvp-shadow-sickle 0.6s ease-out forwards;
+            }
+
+            #${PANEL_ID} .apvp-preview-effect[data-effect="holy-smite"]::after,
+            #${PANEL_ID} .apvp-preview-effect[data-effect="holy"]::after {
+                left: 67px;
+                top: 2px;
+                width: 14px;
+                height: 46px;
+                border-radius: 999px;
+                background: linear-gradient(180deg, rgba(255, 250, 212, 0), rgba(255, 229, 132, 0.92) 22%, rgba(255, 244, 200, 0.98) 48%, rgba(255, 218, 95, 0) 100%);
+                box-shadow: 0 0 18px rgba(255, 220, 125, 0.48);
+                animation: apvp-smite-column 0.58s ease-out forwards;
+            }
+
+            #${PANEL_ID} .apvp-preview-effect[data-effect="arcane-burst"]::after {
+                left: 64px;
+                top: 13px;
+                width: 22px;
+                height: 22px;
+                border-radius: 50%;
+                background: radial-gradient(circle, #f6fbff 0 16%, #a488ff 17% 46%, rgba(113, 166, 255, 0.72) 47% 66%, transparent 68%);
+                box-shadow: 0 0 18px rgba(141, 132, 255, 0.48);
+                animation: apvp-arcane-burst 0.56s ease-out forwards;
+            }
+
+            #${PANEL_ID} .apvp-preview-effect[data-effect="arcane-sacrifice"]::before {
+                left: 4px;
+                top: 8px;
+                width: 32px;
+                height: 32px;
+                border: 2px solid rgba(177, 135, 255, 0.9);
+                border-radius: 50%;
+                box-shadow: inset 0 0 10px rgba(111, 205, 255, 0.2), 0 0 16px rgba(177, 135, 255, 0.42);
+                animation: apvp-sacrifice-rune 0.76s ease-out forwards;
+            }
+
+            #${PANEL_ID} .apvp-preview-effect[data-effect="arcane-sacrifice"]::after {
+                left: 26px;
+                top: 15px;
+                width: 54px;
+                height: 22px;
+                border-radius: 999px;
+                background: linear-gradient(90deg, rgba(255, 111, 160, 0), rgba(255, 111, 160, 0.84) 26%, rgba(140, 117, 255, 0.98) 54%, rgba(99, 214, 255, 0.12) 88%, transparent);
+                box-shadow: 0 0 20px rgba(167, 112, 255, 0.48);
+                animation: apvp-sacrifice-burst 0.68s ease-out forwards;
+            }
+
+            #${PANEL_ID} .apvp-preview-effect[data-effect="arrow-shot"]::after,
+            #${PANEL_ID} .apvp-preview-effect[data-effect="projectile"]::after {
+                left: 68px;
+                top: 20px;
+                width: 12px;
+                height: 12px;
+                background: linear-gradient(135deg, transparent 0 36%, #ecffdc 37% 62%, transparent 63%);
+                transform: rotate(45deg);
+                filter: drop-shadow(0 0 8px rgba(236, 255, 220, 0.35));
+                animation: apvp-arrow-tip 0.5s ease-out forwards;
+            }
+
+            #${PANEL_ID} .apvp-preview-effect[data-effect="arrow-volley"]::before,
+            #${PANEL_ID} .apvp-preview-effect[data-effect="arrow-volley"]::after {
+                left: 4px;
+                width: 82px;
+                height: 4px;
+                border-radius: 999px;
+                background: linear-gradient(90deg, transparent, #84f0a1 18%, #f6ffd2 44%, transparent);
+                box-shadow: 0 0 12px rgba(132, 240, 161, 0.42);
+                animation: apvp-volley 0.54s ease-out forwards;
+            }
+
+            #${PANEL_ID} .apvp-preview-effect[data-effect="arrow-volley"]::before {
+                top: 18px;
+            }
+
+            #${PANEL_ID} .apvp-preview-effect[data-effect="arrow-volley"]::after {
+                top: 30px;
+                animation-delay: 0.06s;
+            }
+
+            #${PANEL_ID} .apvp-preview-effect[data-effect="poison-dart"]::after {
+                left: 61px;
+                top: 11px;
+                width: 24px;
+                height: 24px;
+                border-radius: 50%;
+                background: radial-gradient(circle, #f3ffd8 0 16%, #87ff72 17% 42%, rgba(44, 194, 82, 0.82) 43% 66%, transparent 68%);
+                box-shadow: 0 0 18px rgba(76, 221, 109, 0.45);
+                animation: apvp-poison-burst 0.6s ease-out forwards;
             }
 
             #${PANEL_ID} .apvp-preview-label {
@@ -1026,6 +1317,12 @@
                 border-radius: 10px 10px 7px 7px;
                 background: linear-gradient(180deg, var(--apvp-secondary), var(--apvp-primary));
                 border: 2px solid rgba(11, 14, 17, 0.6);
+            }
+
+            #${PANEL_ID} .apvp-avatar .apvp-body {
+                display: block;
+                gap: 0;
+                padding: 0;
             }
 
             .apvp-avatar .apvp-body::before,
@@ -1432,6 +1729,18 @@
                 100% { opacity: 0; transform: translateX(18px) scaleX(1.1) rotate(-20deg); }
             }
 
+            @keyframes apvp-power-slash-main {
+                0% { opacity: 0; transform: translateX(-24px) scaleX(0.62) rotate(-24deg); }
+                24% { opacity: 1; }
+                100% { opacity: 0; transform: translateX(20px) scaleX(1.18) rotate(-24deg); }
+            }
+
+            @keyframes apvp-power-slash-trail {
+                0% { opacity: 0; transform: translateX(-8px) scaleX(0.5) rotate(-24deg); }
+                36% { opacity: 0.92; }
+                100% { opacity: 0; transform: translateX(16px) scaleX(1.08) rotate(-24deg); }
+            }
+
             @keyframes apvp-pop {
                 0% { opacity: 0; transform: scale(0.3); }
                 20% { opacity: 1; }
@@ -1448,6 +1757,90 @@
                 0% { opacity: 0; transform: scale(0.3) translateY(0); }
                 25% { opacity: 1; }
                 100% { opacity: 0; transform: scale(1.25) translateY(-18px); }
+            }
+
+            @keyframes apvp-fireball-burst {
+                0% { opacity: 0; transform: scale(0.25); }
+                28% { opacity: 1; }
+                100% { opacity: 0; transform: scale(1.45); }
+            }
+
+            @keyframes apvp-fireball-flight {
+                0% { opacity: 0; transform: translateX(-6px) scale(0.55); }
+                18% { opacity: 1; }
+                100% { opacity: 0; transform: translateX(56px) scale(1.08); }
+            }
+
+            @keyframes apvp-meteor-flight {
+                0% { opacity: 0; transform: translate(-12px, -10px) scaleX(0.45) rotate(-20deg); }
+                22% { opacity: 1; }
+                100% { opacity: 0; transform: translate(8px, 10px) scaleX(1.08) rotate(-20deg); }
+            }
+
+            @keyframes apvp-frost-spike {
+                0% { opacity: 0; transform: translateX(-10px) scaleY(0.55); }
+                24% { opacity: 1; }
+                100% { opacity: 0; transform: translateX(4px) scaleY(1.18); }
+            }
+
+            @keyframes apvp-shadow-sickle {
+                0% { opacity: 0; transform: rotate(-60deg) scale(0.45); }
+                25% { opacity: 0.95; }
+                100% { opacity: 0; transform: rotate(55deg) scale(1.14); }
+            }
+
+            @keyframes apvp-smite-column {
+                0% { opacity: 0; transform: scaleY(0.3); }
+                24% { opacity: 1; }
+                100% { opacity: 0; transform: scaleY(1.12); }
+            }
+
+            @keyframes apvp-arcane-burst {
+                0% { opacity: 0; transform: scale(0.24); }
+                22% { opacity: 1; }
+                100% { opacity: 0; transform: scale(1.3); }
+            }
+
+            @keyframes apvp-sacrifice-rune {
+                0% { opacity: 0; transform: scale(0.5) rotate(0deg); }
+                25% { opacity: 1; }
+                100% { opacity: 0; transform: scale(1.3) rotate(150deg); }
+            }
+
+            @keyframes apvp-sacrifice-burst {
+                0% { opacity: 0; transform: scaleX(0.22); }
+                24% { opacity: 1; }
+                100% { opacity: 0; transform: scaleX(1.08); }
+            }
+
+            @keyframes apvp-arrow-tip {
+                0% { opacity: 0; transform: translateX(-26px) rotate(45deg) scale(0.65); }
+                20% { opacity: 1; }
+                100% { opacity: 0; transform: translateX(8px) rotate(45deg) scale(1.05); }
+            }
+
+            @keyframes apvp-volley {
+                0% { opacity: 0; transform: translateX(-18px) scaleX(0.55) rotate(-8deg); }
+                22% { opacity: 1; }
+                100% { opacity: 0; transform: translateX(12px) scaleX(1.05) rotate(-8deg); }
+            }
+
+            @keyframes apvp-poison-burst {
+                0% { opacity: 0; transform: scale(0.25); }
+                24% { opacity: 1; }
+                100% { opacity: 0; transform: scale(1.35); }
+            }
+
+            @keyframes apvp-impact-burst {
+                0% { opacity: 0; transform: scale(0.28); }
+                22% { opacity: 1; }
+                100% { opacity: 0; transform: scale(1.35); }
+            }
+
+            @keyframes apvp-impact-wave {
+                0% { opacity: 0; transform: scaleX(0.3); }
+                20% { opacity: 0.92; }
+                100% { opacity: 0; transform: scaleX(1.18); }
             }
 
             @keyframes apvp-toggle-orb-pulse {
@@ -1907,8 +2300,13 @@
     }
 
     function handlePanelClick(event) {
-        const target = event.target;
-        if (!(target instanceof HTMLElement)) {
+        const rawTarget = event.target;
+        if (!(rawTarget instanceof HTMLElement)) {
+            return;
+        }
+
+        const target = rawTarget.closest("[data-action]");
+        if (!(target instanceof HTMLElement) || !target.closest(`#${PANEL_ID}`)) {
             return;
         }
 
@@ -3210,7 +3608,7 @@
 
     function getClassProfile(classKey) {
         if (classKey === "auto") {
-            return { label: "Auto", effect: "arcane", colors: ["#83b8ff", "#e7f1ff"] };
+            return { label: "Auto", effect: "slash", colors: ["#83b8ff", "#e7f1ff"] };
         }
 
         return CLASS_PROFILES[classKey] || CLASS_PROFILES.adventurer;
@@ -3270,33 +3668,15 @@
     }
 
     function classifyEffect(skillName, classKey) {
-        const text = String(skillName || "").toLowerCase();
-        if (/(heal|mend|recover|renew|restore|regen|cure)/.test(text)) {
-            return "heal";
-        }
+        const text = String(skillName || "")
+            .toLowerCase()
+            .replace(/[^a-z0-9]+/g, " ")
+            .trim();
 
-        if (/(holy|smite|judg|light|blessing|divine)/.test(text)) {
-            return "holy";
-        }
-
-        if (/(fire|flame|burn|ember|inferno|meteor)/.test(text)) {
-            return "fire";
-        }
-
-        if (/(ice|frost|blizzard|glacier)/.test(text)) {
-            return "ice";
-        }
-
-        if (/(shadow|void|curse|doom|drain|poison|venom|reap)/.test(text)) {
-            return "shadow";
-        }
-
-        if (/(arrow|shot|snipe|bolt|pierce|throw)/.test(text)) {
-            return "projectile";
-        }
-
-        if (/(slash|strike|stab|cut|cleave|rend|smash|combo|punch|kick)/.test(text)) {
-            return "slash";
+        for (const entry of SKILL_EFFECT_PATTERNS) {
+            if (entry.test.test(text)) {
+                return entry.effect;
+            }
         }
 
         return getClassProfile(classKey).effect;

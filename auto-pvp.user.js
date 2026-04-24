@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         GravyPvP
 // @namespace    https://github.com/blazeice123/Veyra-Scripts
-// @version      3.3
+// @version      3.8
 // @description  Auto joins PvP matches, decorates classes with avatars, and adds animated attack effects.
 // @author       SkuLexX
 // @match        https://demonicscans.org/pvp_battle.php*
@@ -30,17 +30,18 @@
     const LAUNCH_FLAGS = parseLaunchFlags();
     const WORKER_MODE = LAUNCH_FLAGS.worker === "1";
     const WORKER_SESSION_ID = String(LAUNCH_FLAGS.session || "").trim();
-    const SCRIPT_VERSION = "3.3";
+    const SCRIPT_VERSION = "3.8";
     const CONFIG = {
         tickMs: 1200,
         actionCooldownMs: 1000,
         joinCooldownMs: 4000,
+        lobbyMonitorReloadMs: 45000,
+        readyTokenCount: 30,
         staleReloadMs: 180000,
         workerHeartbeatMs: 1500,
         workerStaleMs: 12000,
         defaults: {
             enabled: true,
-            autoJoin: true,
             autoFight: true,
             autoReload: true,
             battleVisuals: true,
@@ -137,8 +138,6 @@
         { effect: "slash", test: /\b(slash|strike|stab|cut|slice|lunge)\b/ }
     ];
     const SETTING_HELP = {
-        enabled: "Master switch for GravyPvP. Start turns this on for you, and Stop turns it off for you.",
-        autoJoin: "Automatically continue a solo match or join PvP when the hidden worker is running.",
         autoFight: "Automatically target enemies and use skills once a battle is open.",
         autoReload: "If the hidden worker page looks stuck for a few minutes, reload only that worker page to recover.",
         battleVisuals: "Show the little class characters and spell effects inside the panel preview.",
@@ -158,6 +157,7 @@
     let observer = null;
     let lastTargetSlot = null;
     let hooksInstalled = false;
+    let lobbyPageEnteredAt = isLobbyPage() ? Date.now() : 0;
     let battlePageEnteredAt = isBattlePage() ? Date.now() : 0;
     let workerFrame = null;
     let workerSession = !WORKER_MODE ? String(localStorage.getItem(WORKER_SESSION_KEY) || "").trim() : WORKER_SESSION_ID;
@@ -166,6 +166,7 @@
     let battleOutcomeHandled = false;
     let lastEnemyPreviewAt = 0;
     let lastEnemyPreviewKey = "";
+    let scheduledEnemyPreviewTimer = 0;
 
     window.addEventListener("error", (event) => {
         if (!shouldCaptureGlobalError(event?.error, event?.filename, event?.message)) {
@@ -232,6 +233,9 @@
 
     function normalizeSettings(input) {
         const normalized = { ...CONFIG.defaults, ...input };
+        normalized.enabled = !!normalized.enabled;
+        normalized.autoJoin = true;
+        normalized.autoReload = true;
         normalized.playerClass = normalizeClassKey(normalized.playerClass);
         normalized.skillNumber = clampSkillNumber(normalized.skillNumber);
         normalized.skillPriorities = normalizeSkillNameMap(normalized.skillPriorities);
@@ -461,6 +465,20 @@
                 font: inherit;
                 white-space: nowrap;
                 flex-shrink: 0;
+            }
+
+            #${PANEL_ID} button[data-action="start-worker"][data-running="1"] {
+                color: #f7fff7;
+                background: linear-gradient(135deg, #1f8f4b, #35ba67);
+                border-color: #6bd98d;
+                box-shadow: 0 0 0 0 rgba(86, 225, 128, 0.28);
+                animation: apvp-monitor-pulse 1.4s ease-in-out infinite;
+            }
+
+            #${PANEL_ID} button[data-action="start-worker"][data-running="1"]:disabled {
+                opacity: 1;
+                cursor: default;
+                filter: none;
             }
 
             #${PANEL_ID} .apvp-row > * {
@@ -1293,16 +1311,15 @@
                 --apvp-skin: #ffd2b8;
             }
 
-            .apvp-avatar.apvp-avatar-svg {
+            .apvp-avatar.apvp-avatar-art {
                 display: block;
                 overflow: visible;
+                object-fit: contain;
+                object-position: center bottom;
             }
 
-            .apvp-avatar.apvp-avatar-svg svg {
-                display: block;
-                width: 100%;
-                height: 100%;
-                overflow: visible;
+            .apvp-avatar.apvp-avatar-art[alt=""] {
+                color: transparent;
             }
 
             .apvp-avatar .apvp-aura {
@@ -1867,6 +1884,11 @@
                 50% { transform: scale(1.04); }
             }
 
+            @keyframes apvp-monitor-pulse {
+                0%, 100% { box-shadow: 0 0 0 0 rgba(86, 225, 128, 0.26); transform: translateY(0); }
+                50% { box-shadow: 0 0 0 8px rgba(86, 225, 128, 0); transform: translateY(-1px); }
+            }
+
             @keyframes apvp-blood-drip-main {
                 0%, 100% { transform: translateX(-50%) scaleY(0.72); opacity: 0.8; }
                 45% { transform: translateX(-50%) translateY(4px) scaleY(1); opacity: 1; }
@@ -1931,16 +1953,8 @@
                     </div>
                     <div class="apvp-preview"></div>
                     <div class="apvp-row">
-                        ${buildCheckboxField("enabled", "Enabled")}
-                        ${buildCheckboxField("autoJoin", "Auto join")}
-                    </div>
-                    <div class="apvp-row">
                         ${buildCheckboxField("autoFight", "Auto fight")}
                         ${buildCheckboxField("battleVisuals", "Visual FX")}
-                    </div>
-                    <div class="apvp-row">
-                        ${buildCheckboxField("autoReload", "Safe reload")}
-                        <div></div>
                     </div>
                     <div class="apvp-row">
                         <label title="${buildHintTitle("skillNumber")}">Fallback slot <input type="number" min="1" max="9" step="1" data-setting="skillNumber" title="${buildHintTitle("skillNumber")}"></label>
@@ -1967,10 +1981,7 @@
         panel.classList.toggle("collapsed", !settings.expanded);
         panel.classList.toggle("apvp-no-fx", !settings.battleVisuals);
 
-        syncCheckbox(panel, "enabled", settings.enabled);
-        syncCheckbox(panel, "autoJoin", settings.autoJoin);
         syncCheckbox(panel, "autoFight", settings.autoFight);
-        syncCheckbox(panel, "autoReload", settings.autoReload);
         syncCheckbox(panel, "battleVisuals", settings.battleVisuals);
 
         const skillInput = panel.querySelector('input[data-setting="skillNumber"]');
@@ -2026,6 +2037,11 @@
         const startWorkerButton = panel.querySelector('button[data-action="start-worker"]');
         if (startWorkerButton instanceof HTMLButtonElement) {
             startWorkerButton.disabled = workerState.active;
+            startWorkerButton.dataset.running = workerState.active ? "1" : "0";
+            startWorkerButton.textContent = workerState.active ? "Monitoring" : "Start";
+            startWorkerButton.title = workerState.active
+                ? "Hidden PvP worker is running and monitoring tokens in the background."
+                : "Start the hidden PvP worker so the visible page stays idle.";
         }
 
         const stopWorkerButton = panel.querySelector('button[data-action="stop-worker"]');
@@ -2314,11 +2330,6 @@
         }
 
         saveSettings();
-
-        if (!WORKER_MODE && settingName === "enabled" && !target.checked && getCurrentWorkerState().active) {
-            stopBackgroundWorker("Stopped hidden background worker");
-            return;
-        }
 
         syncPanelState();
         touchProgress();
@@ -2827,13 +2838,22 @@
                     battlePageEnteredAt = Date.now();
                     battleOutcomeHandled = false;
                 }
+                lobbyPageEnteredAt = 0;
 
                 const visibleSkillButtons = getSkillButtons();
                 if (visibleSkillButtons.length) {
                     rememberSkillButtons(visibleSkillButtons);
                 }
+            } else if (isLobbyPage()) {
+                if (!lobbyPageEnteredAt) {
+                    lobbyPageEnteredAt = Date.now();
+                }
+                battlePageEnteredAt = 0;
+                battleNoTargetLoops = 0;
+                battleOutcomeHandled = false;
             } else {
                 battlePageEnteredAt = 0;
+                lobbyPageEnteredAt = 0;
                 battleNoTargetLoops = 0;
                 battleOutcomeHandled = false;
             }
@@ -2905,11 +2925,9 @@
 
         const tokens = getTokenCount();
         const tokenLabel = Number.isFinite(tokens) ? `tokens ${tokens}` : "tokens unknown";
-
-        if (!settings.autoJoin) {
-            updateStatus(`Lobby: ${tokenLabel}`);
-            return;
-        }
+        const shouldMonitorTokens = WORKER_MODE && settings.enabled;
+        const readyTokenCount = Number(CONFIG.readyTokenCount) || 30;
+        const tokenGoalLabel = `${readyTokenCount} tokens`;
 
         if (continueButton) {
             recordPreviewEvent("Continuing solo match", "", {
@@ -2921,17 +2939,29 @@
         }
 
         if (!joinButton) {
+            if (shouldMonitorTokens && maybeRefreshLobbyMonitor(`Lobby: waiting for join button, ${tokenLabel}`)) {
+                return;
+            }
             updateStatus(`Lobby: waiting for join button, ${tokenLabel}`);
             return;
         }
 
-        if (!isClickable(joinButton)) {
-            updateStatus(`Lobby: join unavailable, ${tokenLabel}`);
+        if (!Number.isFinite(tokens) || tokens < readyTokenCount) {
+            const waitingText = Number.isFinite(tokens)
+                ? `Lobby: banking tokens ${tokens}/${readyTokenCount} in background`
+                : `Lobby: banking tokens in background, waiting for ${tokenGoalLabel}`;
+            if (shouldMonitorTokens && maybeRefreshLobbyMonitor(waitingText)) {
+                return;
+            }
+            updateStatus(waitingText);
             return;
         }
 
-        if (tokens === 0) {
-            updateStatus("Lobby: no PvP tokens left");
+        if (!isClickable(joinButton)) {
+            if (shouldMonitorTokens && maybeRefreshLobbyMonitor(`Lobby: join unavailable, ${tokenLabel}`)) {
+                return;
+            }
+            updateStatus(`Lobby: join unavailable, ${tokenLabel}`);
             return;
         }
 
@@ -2994,6 +3024,23 @@
         }
 
         await targetLowestHpEnemy();
+    }
+
+    function maybeRefreshLobbyMonitor(waitingStatus) {
+        if (!WORKER_MODE || !isLobbyPage()) {
+            return false;
+        }
+
+        const elapsed = lobbyPageEnteredAt > 0 ? Date.now() - lobbyPageEnteredAt : 0;
+        if (elapsed < CONFIG.lobbyMonitorReloadMs) {
+            updateStatus(waitingStatus);
+            return false;
+        }
+
+        touchProgress();
+        updateStatus("Lobby: refreshing hidden token monitor");
+        window.location.reload();
+        return true;
     }
 
     async function maybeLeaveFinishedBattle(resolution = getBattleResolutionState()) {
@@ -3133,12 +3180,15 @@
         };
     }
 
-    function maybeRecordEnemyTurnPreview() {
+    function maybeRecordEnemyTurnPreview(force = false) {
         if (!settings.battleVisuals || !isBattlePage()) {
             return;
         }
 
-        const enemyActor = getCurrentEnemyActorSlot();
+        const enemyActor = getCurrentEnemyActorSlot()
+            || (isAliveSlot(lastTargetSlot) && getSlotTeam(lastTargetSlot) === "enemy" ? lastTargetSlot : null)
+            || getEnemySlots()[0]
+            || null;
         if (!(enemyActor instanceof HTMLElement)) {
             return;
         }
@@ -3149,7 +3199,7 @@
         const now = Date.now();
         const previewKey = `${actorName}|${enemyClass}|${previewState.allyClass || getSelectedPlayerClassKey() || "adventurer"}`;
 
-        if (previewKey === lastEnemyPreviewKey && (now - lastEnemyPreviewAt) < 1400) {
+        if (!force && previewKey === lastEnemyPreviewKey && (now - lastEnemyPreviewAt) < 1400) {
             return;
         }
 
@@ -3160,6 +3210,21 @@
             enemyClass,
             phase: "enemy-action"
         });
+    }
+
+    function scheduleEnemyTurnPreview(delayMs = 800) {
+        if (!settings.battleVisuals) {
+            return;
+        }
+
+        if (scheduledEnemyPreviewTimer) {
+            window.clearTimeout(scheduledEnemyPreviewTimer);
+        }
+
+        scheduledEnemyPreviewTimer = window.setTimeout(() => {
+            scheduledEnemyPreviewTimer = 0;
+            maybeRecordEnemyTurnPreview(true);
+        }, Math.max(120, Number(delayMs) || 800));
     }
 
     function isSlotEffectivelyAlive(slot) {
@@ -3285,6 +3350,7 @@
                 phase: "action"
             });
             clickElement(chosenButton, `Used ${getButtonLabel(chosenButton)}`);
+            scheduleEnemyTurnPreview();
         } finally {
             if (!alreadyBusy) {
                 window.setTimeout(() => {
@@ -3482,34 +3548,24 @@
 
     function buildAvatarMarkup(label, classKey = "adventurer") {
         return `
-            <div class="apvp-avatar apvp-avatar-svg" aria-hidden="true">
-                ${buildAvatarSvg(classKey)}
-            </div>
+            <img class="apvp-avatar apvp-avatar-art" alt="" src="${buildAvatarDataUri(classKey)}">
             <div class="apvp-badge">${escapeHtml(label)}</div>
         `;
+    }
+
+    function buildAvatarDataUri(classKey) {
+        const svg = buildAvatarSvg(classKey)
+            .replace(/>\s+</g, "><")
+            .replace(/\s{2,}/g, " ")
+            .trim();
+        return `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`;
     }
 
     function buildAvatarSvg(classKey) {
         const palette = getAvatarPalette(classKey);
         const outline = palette.outline;
         const accessory = buildAvatarAccessorySvg(classKey, palette);
-        return `
-            <svg viewBox="0 0 44 54" xmlns="http://www.w3.org/2000/svg" role="presentation" focusable="false">
-                <ellipse cx="22" cy="45" rx="12" ry="5" fill="${palette.glow}" opacity="0.62"></ellipse>
-                <path d="M15 24 C18 20, 26 20, 29 24 L30 39 C26 42, 18 42, 14 39 Z" fill="${palette.primary}" stroke="${outline}" stroke-width="1.8" stroke-linejoin="round"></path>
-                <path d="M17 26 C20 29, 24 29, 27 26 L28 34 C24 36, 20 36, 16 34 Z" fill="${palette.secondary}" opacity="0.92"></path>
-                <path d="M16 39 L14 48" stroke="${outline}" stroke-width="3" stroke-linecap="round"></path>
-                <path d="M28 39 L30 48" stroke="${outline}" stroke-width="3" stroke-linecap="round"></path>
-                <path d="M15 28 L10 36" stroke="${outline}" stroke-width="3" stroke-linecap="round"></path>
-                <path d="M29 28 L34 36" stroke="${outline}" stroke-width="3" stroke-linecap="round"></path>
-                <circle cx="22" cy="14" r="8" fill="${palette.skin}" stroke="${outline}" stroke-width="1.8"></circle>
-                <path d="M14 13 C16 5, 28 5, 30 13 L30 16 C26 12, 18 12, 14 16 Z" fill="${palette.hair}"></path>
-                <circle cx="19" cy="14" r="1.1" fill="${outline}"></circle>
-                <circle cx="25" cy="14" r="1.1" fill="${outline}"></circle>
-                <path d="M19 18 C21 19.5, 23 19.5, 25 18" stroke="${outline}" stroke-width="1.2" stroke-linecap="round" fill="none"></path>
-                ${accessory}
-            </svg>
-        `;
+        return `<svg viewBox="0 0 44 54" xmlns="http://www.w3.org/2000/svg" role="presentation" focusable="false"><ellipse cx="22" cy="45" rx="12" ry="5" fill="${palette.glow}" opacity="0.62"></ellipse><path d="M15 24 C18 20, 26 20, 29 24 L30 39 C26 42, 18 42, 14 39 Z" fill="${palette.primary}" stroke="${outline}" stroke-width="1.8" stroke-linejoin="round"></path><path d="M17 26 C20 29, 24 29, 27 26 L28 34 C24 36, 20 36, 16 34 Z" fill="${palette.secondary}" opacity="0.92"></path><path d="M16 39 L14 48" stroke="${outline}" stroke-width="3" stroke-linecap="round"></path><path d="M28 39 L30 48" stroke="${outline}" stroke-width="3" stroke-linecap="round"></path><path d="M15 28 L10 36" stroke="${outline}" stroke-width="3" stroke-linecap="round"></path><path d="M29 28 L34 36" stroke="${outline}" stroke-width="3" stroke-linecap="round"></path><circle cx="22" cy="14" r="8" fill="${palette.skin}" stroke="${outline}" stroke-width="1.8"></circle><path d="M14 13 C16 5, 28 5, 30 13 L30 16 C26 12, 18 12, 14 16 Z" fill="${palette.hair}"></path><circle cx="19" cy="14" r="1.1" fill="${outline}"></circle><circle cx="25" cy="14" r="1.1" fill="${outline}"></circle><path d="M19 18 C21 19.5, 23 19.5, 25 18" stroke="${outline}" stroke-width="1.2" stroke-linecap="round" fill="none"></path>${accessory}</svg>`;
     }
 
     function getAvatarPalette(classKey) {
@@ -4319,7 +4375,7 @@
             return;
         }
 
-        if (!settings.enabled || !settings.autoReload || (!WORKER_MODE && document.hidden)) {
+        if (!settings.enabled || (!WORKER_MODE && document.hidden)) {
             return;
         }
 

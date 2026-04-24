@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         GravyPvP
 // @namespace    https://github.com/blazeice123/Veyra-Scripts
-// @version      3.12
+// @version      3.13
 // @description  Auto joins PvP matches, decorates classes with avatars, and adds animated attack effects.
 // @author       SkuLexX
 // @match        https://demonicscans.org/pvp_battle.php*
@@ -30,7 +30,7 @@
     const LAUNCH_FLAGS = parseLaunchFlags();
     const WORKER_MODE = LAUNCH_FLAGS.worker === "1";
     const WORKER_SESSION_ID = String(LAUNCH_FLAGS.session || "").trim();
-    const SCRIPT_VERSION = "3.12";
+    const SCRIPT_VERSION = "3.13";
     const CONFIG = {
         tickMs: 1200,
         actionCooldownMs: 1000,
@@ -419,6 +419,10 @@
 
             #${PANEL_ID} .apvp-row.apvp-row-single {
                 grid-template-columns: 1fr;
+            }
+
+            #${PANEL_ID} .apvp-start-now-row[hidden] {
+                display: none !important;
             }
 
             #${PANEL_ID} label {
@@ -2048,8 +2052,10 @@
             workerNode.textContent = workerState.text;
         }
 
-        const startNowRow = panel.querySelector(".apvp-start-now-row");
+        const startNowButton = panel.querySelector('button[data-action="start-now"]');
+        const startNowRow = startNowButton?.closest(".apvp-row") || panel.querySelector(".apvp-start-now-row");
         if (startNowRow instanceof HTMLElement) {
+            startNowRow.classList.add("apvp-start-now-row", "apvp-row-single");
             startNowRow.hidden = !workerState.showStartNow;
         }
 
@@ -2067,7 +2073,6 @@
                 : "Start the hidden PvP worker so the visible page stays idle.";
         }
 
-        const startNowButton = panel.querySelector('button[data-action="start-now"]');
         if (startNowButton instanceof HTMLButtonElement) {
             startNowButton.disabled = !workerState.active || workerState.forceStartNow;
             startNowButton.dataset.armed = workerState.forceStartNow ? "1" : "0";

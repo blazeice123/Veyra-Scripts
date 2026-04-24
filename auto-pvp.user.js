@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         GravyPvP
 // @namespace    https://github.com/blazeice123/Veyra-Scripts
-// @version      3.8
+// @version      3.9
 // @description  Auto joins PvP matches, decorates classes with avatars, and adds animated attack effects.
 // @author       SkuLexX
 // @match        https://demonicscans.org/pvp_battle.php*
@@ -30,7 +30,7 @@
     const LAUNCH_FLAGS = parseLaunchFlags();
     const WORKER_MODE = LAUNCH_FLAGS.worker === "1";
     const WORKER_SESSION_ID = String(LAUNCH_FLAGS.session || "").trim();
-    const SCRIPT_VERSION = "3.8";
+    const SCRIPT_VERSION = "3.9";
     const CONFIG = {
         tickMs: 1200,
         actionCooldownMs: 1000,
@@ -138,7 +138,6 @@
         { effect: "slash", test: /\b(slash|strike|stab|cut|slice|lunge)\b/ }
     ];
     const SETTING_HELP = {
-        autoFight: "Automatically target enemies and use skills once a battle is open.",
         autoReload: "If the hidden worker page looks stuck for a few minutes, reload only that worker page to recover.",
         battleVisuals: "Show the little class characters and spell effects inside the panel preview.",
         skillNumber: "Fallback skill slot to use when no saved skill priority matches.",
@@ -234,6 +233,7 @@
     function normalizeSettings(input) {
         const normalized = { ...CONFIG.defaults, ...input };
         normalized.enabled = !!normalized.enabled;
+        normalized.autoFight = true;
         normalized.autoJoin = true;
         normalized.autoReload = true;
         normalized.playerClass = normalizeClassKey(normalized.playerClass);
@@ -1953,7 +1953,6 @@
                     </div>
                     <div class="apvp-preview"></div>
                     <div class="apvp-row">
-                        ${buildCheckboxField("autoFight", "Auto fight")}
                         ${buildCheckboxField("battleVisuals", "Visual FX")}
                     </div>
                     <div class="apvp-row">
@@ -1981,7 +1980,6 @@
         panel.classList.toggle("collapsed", !settings.expanded);
         panel.classList.toggle("apvp-no-fx", !settings.battleVisuals);
 
-        syncCheckbox(panel, "autoFight", settings.autoFight);
         syncCheckbox(panel, "battleVisuals", settings.battleVisuals);
 
         const skillInput = panel.querySelector('input[data-setting="skillNumber"]');
@@ -2996,11 +2994,6 @@
                 phase: "idle"
             });
             updateStatus(`Battle: ${outcomeLabel.toLowerCase()} detected, waiting for return`);
-            return;
-        }
-
-        if (!settings.autoFight) {
-            updateStatus("Battle: auto fight is off");
             return;
         }
 

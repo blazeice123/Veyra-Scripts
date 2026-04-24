@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         GravyPvP
 // @namespace    https://github.com/blazeice123/Veyra-Scripts
-// @version      3.2
+// @version      3.3
 // @description  Auto joins PvP matches, decorates classes with avatars, and adds animated attack effects.
 // @author       SkuLexX
 // @match        https://demonicscans.org/pvp_battle.php*
@@ -30,7 +30,7 @@
     const LAUNCH_FLAGS = parseLaunchFlags();
     const WORKER_MODE = LAUNCH_FLAGS.worker === "1";
     const WORKER_SESSION_ID = String(LAUNCH_FLAGS.session || "").trim();
-    const SCRIPT_VERSION = "3.2";
+    const SCRIPT_VERSION = "3.3";
     const CONFIG = {
         tickMs: 1200,
         actionCooldownMs: 1000,
@@ -164,6 +164,8 @@
     let previewState = buildPreviewState();
     let battleNoTargetLoops = 0;
     let battleOutcomeHandled = false;
+    let lastEnemyPreviewAt = 0;
+    let lastEnemyPreviewKey = "";
 
     window.addEventListener("error", (event) => {
         if (!shouldCaptureGlobalError(event?.error, event?.filename, event?.message)) {
@@ -735,6 +737,8 @@
                 align-items: end;
                 justify-content: center;
                 min-height: 86px;
+                overflow: visible;
+                z-index: 2;
             }
 
             #${PANEL_ID} .apvp-preview-side .apvp-slot-visual {
@@ -744,6 +748,7 @@
                 bottom: auto;
                 width: 52px;
                 height: 62px;
+                overflow: visible;
                 animation-duration: 1.8s;
             }
 
@@ -770,6 +775,7 @@
                 align-items: center;
                 justify-content: center;
                 min-height: 86px;
+                z-index: 1;
             }
 
             #${PANEL_ID} .apvp-preview-effect {
@@ -1245,6 +1251,7 @@
                 width: 44px;
                 height: 54px;
                 z-index: 20;
+                overflow: visible;
                 pointer-events: none;
                 transform-origin: center bottom;
                 animation: apvp-bob 2.2s ease-in-out infinite;
@@ -1284,6 +1291,18 @@
                 --apvp-glow: rgba(131, 184, 255, 0.45);
                 --apvp-dark: #1b2330;
                 --apvp-skin: #ffd2b8;
+            }
+
+            .apvp-avatar.apvp-avatar-svg {
+                display: block;
+                overflow: visible;
+            }
+
+            .apvp-avatar.apvp-avatar-svg svg {
+                display: block;
+                width: 100%;
+                height: 100%;
+                overflow: visible;
             }
 
             .apvp-avatar .apvp-aura {
@@ -2076,11 +2095,14 @@
         const allyVisual = allySide?.querySelector(".apvp-slot-visual");
         const enemyVisual = enemySide?.querySelector(".apvp-slot-visual");
         const labelNode = container.querySelector(".apvp-preview-label");
+        const phase = String(preview.phase || "idle");
 
         syncPreviewAvatar(allyVisual, preview.allyClass, "ally");
         syncPreviewAvatar(enemyVisual, preview.enemyClass || "shadow", "enemy");
-        syncPreviewPhase(allySide, "apvp-preview-cast", preview.phase === "action" || preview.phase === "cast", preview.eventId);
-        syncPreviewPhase(enemySide, "apvp-preview-hit", preview.phase === "action" || preview.phase === "hit", preview.eventId);
+        syncPreviewPhase(allySide, "apvp-preview-cast", phase === "action" || phase === "cast" || phase === "ally-action" || phase === "ally-cast", preview.eventId);
+        syncPreviewPhase(allySide, "apvp-preview-hit", phase === "enemy-action" || phase === "enemy-hit" || phase === "enemy-cast", preview.eventId);
+        syncPreviewPhase(enemySide, "apvp-preview-cast", phase === "enemy-action" || phase === "enemy-cast", preview.eventId);
+        syncPreviewPhase(enemySide, "apvp-preview-hit", phase === "action" || phase === "hit" || phase === "cast" || phase === "ally-action" || phase === "ally-cast", preview.eventId);
         syncPreviewEffect(container, preview);
 
         if (labelNode) {
@@ -2091,19 +2113,17 @@
     function buildPreviewMarkup(preview) {
         const allyProfile = getClassProfile(preview.allyClass);
         const enemyProfile = getClassProfile(preview.enemyClass || "shadow");
-        const allyClass = preview.phase === "action" || preview.phase === "cast" ? "apvp-preview-cast" : "";
-        const enemyClass = preview.phase === "action" || preview.phase === "hit" ? "apvp-preview-hit" : "";
 
         return `
             <div class="apvp-preview-stage">
-                <div class="apvp-preview-side ally ${allyClass}">
-                    <div class="apvp-slot-visual" data-class="${escapeHtml(preview.allyClass)}" data-team="ally">${buildAvatarMarkup(allyProfile.label)}</div>
+                <div class="apvp-preview-side ally">
+                    <div class="apvp-slot-visual" data-class="${escapeHtml(preview.allyClass)}" data-team="ally">${buildAvatarMarkup(allyProfile.label, preview.allyClass)}</div>
                 </div>
                 <div class="apvp-preview-center">
                     <div class="apvp-preview-effect" data-effect="${escapeHtml(preview.effectType || "")}" data-event="${escapeHtml(preview.eventId || 0)}"></div>
                 </div>
-                <div class="apvp-preview-side enemy ${enemyClass}">
-                    <div class="apvp-slot-visual" data-class="${escapeHtml(preview.enemyClass || "shadow")}" data-team="enemy">${buildAvatarMarkup(enemyProfile.label)}</div>
+                <div class="apvp-preview-side enemy">
+                    <div class="apvp-slot-visual" data-class="${escapeHtml(preview.enemyClass || "shadow")}" data-team="enemy">${buildAvatarMarkup(enemyProfile.label, preview.enemyClass || "shadow")}</div>
                 </div>
             </div>
             <div class="apvp-preview-label">${escapeHtml(preview.actionText || "Standing by")}</div>
@@ -2121,7 +2141,7 @@
         if (node.dataset.class !== normalizedClass || node.dataset.team !== team || !node.firstElementChild) {
             node.dataset.class = normalizedClass;
             node.dataset.team = team;
-            node.innerHTML = buildAvatarMarkup(profile.label);
+            node.innerHTML = buildAvatarMarkup(profile.label, normalizedClass);
         }
     }
 
@@ -2132,16 +2152,18 @@
 
         const eventKey = String(eventId || 0);
         const phaseKey = `${className}:${eventKey}`;
+        const phaseStoreKey = `phase${className.replace(/[^a-z0-9]+/gi, "")}`;
         if (!active) {
             node.classList.remove(className);
+            delete node.dataset[phaseStoreKey];
             return;
         }
 
-        if (node.dataset.phaseKey === phaseKey && node.classList.contains(className)) {
+        if (node.dataset[phaseStoreKey] === phaseKey && node.classList.contains(className)) {
             return;
         }
 
-        node.dataset.phaseKey = phaseKey;
+        node.dataset[phaseStoreKey] = phaseKey;
         node.classList.remove(className);
         void node.offsetWidth;
         node.classList.add(className);
@@ -2173,15 +2195,20 @@
     }
 
     function recordPreviewEvent(actionText, effectType = "", options = {}) {
+        const phase = options.phase || (effectType ? "action" : "idle");
         previewState = buildPreviewState({
             ...previewState,
             allyClass: options.allyClass || previewState.allyClass || getSelectedPlayerClassKey() || "adventurer",
             enemyClass: options.enemyClass || previewState.enemyClass || "shadow",
             effectType,
             actionText,
-            phase: options.phase || (effectType ? "action" : "idle"),
+            phase,
             eventId: Date.now()
         });
+
+        if (!String(phase).startsWith("enemy")) {
+            lastEnemyPreviewKey = "";
+        }
 
         if (WORKER_MODE) {
             publishWorkerReport(options.reportPhase || "running", actionText);
@@ -2961,6 +2988,7 @@
         }
 
         if (attackButton && !isClickable(attackButton)) {
+            maybeRecordEnemyTurnPreview();
             updateStatus("Battle: waiting for turn");
             return;
         }
@@ -3103,6 +3131,35 @@
             dead,
             defeated: normalizedSlots.length > 0 && alive === 0 && dead > 0
         };
+    }
+
+    function maybeRecordEnemyTurnPreview() {
+        if (!settings.battleVisuals || !isBattlePage()) {
+            return;
+        }
+
+        const enemyActor = getCurrentEnemyActorSlot();
+        if (!(enemyActor instanceof HTMLElement)) {
+            return;
+        }
+
+        const enemyClass = resolveSlotClassKey(enemyActor, "enemy");
+        const effectType = getClassProfile(enemyClass).effect || "slash";
+        const actorName = getSlotName(enemyActor);
+        const now = Date.now();
+        const previewKey = `${actorName}|${enemyClass}|${previewState.allyClass || getSelectedPlayerClassKey() || "adventurer"}`;
+
+        if (previewKey === lastEnemyPreviewKey && (now - lastEnemyPreviewAt) < 1400) {
+            return;
+        }
+
+        lastEnemyPreviewKey = previewKey;
+        lastEnemyPreviewAt = now;
+        recordPreviewEvent(`${actorName} attacks`, effectType, {
+            allyClass: previewState.allyClass || getSelectedPlayerClassKey() || "adventurer",
+            enemyClass,
+            phase: "enemy-action"
+        });
     }
 
     function isSlotEffectivelyAlive(slot) {
@@ -3419,22 +3476,135 @@
         visual.dataset.class = classKey;
         visual.style.opacity = slot.dataset.alive === "0" ? "0.38" : "1";
         if (needsRefresh) {
-            visual.innerHTML = buildAvatarMarkup(profile.label);
+            visual.innerHTML = buildAvatarMarkup(profile.label, classKey);
         }
     }
 
-    function buildAvatarMarkup(label) {
+    function buildAvatarMarkup(label, classKey = "adventurer") {
         return `
-            <div class="apvp-avatar">
-                <div class="apvp-aura"></div>
-                <div class="apvp-hat"></div>
-                <div class="apvp-head"></div>
-                <div class="apvp-body"></div>
-                <div class="apvp-accent"></div>
-                <div class="apvp-weapon"></div>
+            <div class="apvp-avatar apvp-avatar-svg" aria-hidden="true">
+                ${buildAvatarSvg(classKey)}
             </div>
             <div class="apvp-badge">${escapeHtml(label)}</div>
         `;
+    }
+
+    function buildAvatarSvg(classKey) {
+        const palette = getAvatarPalette(classKey);
+        const outline = palette.outline;
+        const accessory = buildAvatarAccessorySvg(classKey, palette);
+        return `
+            <svg viewBox="0 0 44 54" xmlns="http://www.w3.org/2000/svg" role="presentation" focusable="false">
+                <ellipse cx="22" cy="45" rx="12" ry="5" fill="${palette.glow}" opacity="0.62"></ellipse>
+                <path d="M15 24 C18 20, 26 20, 29 24 L30 39 C26 42, 18 42, 14 39 Z" fill="${palette.primary}" stroke="${outline}" stroke-width="1.8" stroke-linejoin="round"></path>
+                <path d="M17 26 C20 29, 24 29, 27 26 L28 34 C24 36, 20 36, 16 34 Z" fill="${palette.secondary}" opacity="0.92"></path>
+                <path d="M16 39 L14 48" stroke="${outline}" stroke-width="3" stroke-linecap="round"></path>
+                <path d="M28 39 L30 48" stroke="${outline}" stroke-width="3" stroke-linecap="round"></path>
+                <path d="M15 28 L10 36" stroke="${outline}" stroke-width="3" stroke-linecap="round"></path>
+                <path d="M29 28 L34 36" stroke="${outline}" stroke-width="3" stroke-linecap="round"></path>
+                <circle cx="22" cy="14" r="8" fill="${palette.skin}" stroke="${outline}" stroke-width="1.8"></circle>
+                <path d="M14 13 C16 5, 28 5, 30 13 L30 16 C26 12, 18 12, 14 16 Z" fill="${palette.hair}"></path>
+                <circle cx="19" cy="14" r="1.1" fill="${outline}"></circle>
+                <circle cx="25" cy="14" r="1.1" fill="${outline}"></circle>
+                <path d="M19 18 C21 19.5, 23 19.5, 25 18" stroke="${outline}" stroke-width="1.2" stroke-linecap="round" fill="none"></path>
+                ${accessory}
+            </svg>
+        `;
+    }
+
+    function getAvatarPalette(classKey) {
+        switch (normalizeClassKey(classKey)) {
+        case "warrior":
+            return { primary: "#cb5932", secondary: "#ffd37d", hair: "#582416", skin: "#f3c8a7", glow: "rgba(255, 168, 108, 0.58)", outline: "#1a0e0d", accent: "#ffe4a6", dark: "#5c2a1f" };
+        case "mage":
+            return { primary: "#4b7dff", secondary: "#b08dff", hair: "#2e2964", skin: "#efcdb4", glow: "rgba(109, 172, 255, 0.52)", outline: "#131629", accent: "#d8c4ff", dark: "#25306a" };
+        case "ranger":
+            return { primary: "#4d9d53", secondary: "#d4ff7a", hair: "#2f3a21", skin: "#ecc69f", glow: "rgba(116, 220, 136, 0.48)", outline: "#142013", accent: "#efffc0", dark: "#24452a" };
+        case "rogue":
+            return { primary: "#4e5d86", secondary: "#9ec1ff", hair: "#182036", skin: "#dec1ad", glow: "rgba(120, 170, 255, 0.4)", outline: "#0e1421", accent: "#b3c2ff", dark: "#1d2a45" };
+        case "healer":
+            return { primary: "#55b89d", secondary: "#fff3af", hair: "#4a5734", skin: "#f1d7bf", glow: "rgba(127, 255, 212, 0.5)", outline: "#123329", accent: "#ffffff", dark: "#2e5a49" };
+        case "paladin":
+            return { primary: "#d1a63a", secondary: "#fff3bf", hair: "#6b5521", skin: "#efceaf", glow: "rgba(255, 224, 123, 0.52)", outline: "#33240e", accent: "#fffdf3", dark: "#7c6024" };
+        case "necromancer":
+            return { primary: "#7047b5", secondary: "#63d3a2", hair: "#1d1233", skin: "#d4c2dd", glow: "rgba(146, 104, 255, 0.48)", outline: "#120d1f", accent: "#b8f5da", dark: "#342053" };
+        case "monk":
+            return { primary: "#d88e47", secondary: "#ffe6a7", hair: "#69462b", skin: "#efc49c", glow: "rgba(255, 187, 102, 0.45)", outline: "#2a170e", accent: "#fff0cf", dark: "#784d24" };
+        case "berserker":
+            return { primary: "#c23d46", secondary: "#ffba69", hair: "#5a1a1f", skin: "#e8b699", glow: "rgba(255, 111, 112, 0.48)", outline: "#240b0f", accent: "#ffd7a2", dark: "#6a252a" };
+        case "shadow":
+            return { primary: "#505575", secondary: "#b59af8", hair: "#171a28", skin: "#c8bfd8", glow: "rgba(141, 146, 210, 0.42)", outline: "#0e1320", accent: "#d6cbff", dark: "#252845" };
+        default:
+            return { primary: "#83b8ff", secondary: "#e7f1ff", hair: "#4c5568", skin: "#ffd2b8", glow: "rgba(131, 184, 255, 0.45)", outline: "#1b2330", accent: "#f9fcff", dark: "#314157" };
+        }
+    }
+
+    function buildAvatarAccessorySvg(classKey, palette) {
+        switch (normalizeClassKey(classKey)) {
+        case "warrior":
+            return `
+                <path d="M31 26 L39 18" stroke="${palette.accent}" stroke-width="3" stroke-linecap="round"></path>
+                <path d="M36 15 L40 19 L39 22 L35 18 Z" fill="#f4f0ea" stroke="${palette.outline}" stroke-width="1"></path>
+                <path d="M30 26 L34 30" stroke="${palette.dark}" stroke-width="3" stroke-linecap="round"></path>
+            `;
+        case "mage":
+            return `
+                <path d="M33 22 L37 40" stroke="${palette.accent}" stroke-width="2.8" stroke-linecap="round"></path>
+                <circle cx="32" cy="19" r="4.5" fill="${palette.secondary}" opacity="0.95"></circle>
+                <path d="M13 10 L22 4 L31 10" fill="${palette.secondary}" stroke="${palette.outline}" stroke-width="1.5"></path>
+            `;
+        case "ranger":
+            return `
+                <path d="M34 21 C38 23, 38 33, 34 35" stroke="${palette.accent}" stroke-width="2.2" fill="none"></path>
+                <path d="M31 20 C35 23, 35 33, 31 36" stroke="${palette.dark}" stroke-width="2.2" fill="none"></path>
+                <path d="M30 21 L37 36" stroke="${palette.accent}" stroke-width="1.8"></path>
+            `;
+        case "rogue":
+            return `
+                <path d="M13 8 C17 5, 27 5, 31 8 L28 18 L16 18 Z" fill="${palette.dark}" opacity="0.92"></path>
+                <path d="M30 28 L37 23" stroke="${palette.accent}" stroke-width="2.6" stroke-linecap="round"></path>
+            `;
+        case "healer":
+            return `
+                <path d="M33 22 L36 40" stroke="${palette.accent}" stroke-width="2.6" stroke-linecap="round"></path>
+                <path d="M16 26 H24" stroke="${palette.accent}" stroke-width="2.2" stroke-linecap="round"></path>
+                <path d="M20 22 V30" stroke="${palette.accent}" stroke-width="2.2" stroke-linecap="round"></path>
+            `;
+        case "paladin":
+            return `
+                <path d="M11 24 L16 22 L16 33 L11 35 L7 33 L7 22 Z" fill="${palette.accent}" opacity="0.92" stroke="${palette.outline}" stroke-width="1.2"></path>
+                <path d="M31 24 L37 19" stroke="${palette.secondary}" stroke-width="2.8" stroke-linecap="round"></path>
+                <circle cx="12" cy="28" r="1.6" fill="${palette.primary}"></circle>
+            `;
+        case "necromancer":
+            return `
+                <path d="M33 20 L36 40" stroke="${palette.accent}" stroke-width="2.5" stroke-linecap="round"></path>
+                <circle cx="32" cy="17" r="4.2" fill="${palette.secondary}" opacity="0.75"></circle>
+                <circle cx="31" cy="16.5" r="0.9" fill="${palette.outline}"></circle>
+                <circle cx="34" cy="16.5" r="0.9" fill="${palette.outline}"></circle>
+            `;
+        case "monk":
+            return `
+                <circle cx="12" cy="28" r="3.4" fill="${palette.accent}" opacity="0.82"></circle>
+                <circle cx="32" cy="28" r="3.4" fill="${palette.accent}" opacity="0.82"></circle>
+                <path d="M14 9 C18 6, 26 6, 30 9" stroke="${palette.outline}" stroke-width="1.8" fill="none"></path>
+            `;
+        case "berserker":
+            return `
+                <path d="M31 24 L40 16" stroke="${palette.accent}" stroke-width="3.4" stroke-linecap="round"></path>
+                <path d="M36 13 L41 18 L39 21 L34 16 Z" fill="#f4ebe0" stroke="${palette.outline}" stroke-width="1"></path>
+                <path d="M13 9 L16 5 L19 9" fill="${palette.accent}" opacity="0.88"></path>
+            `;
+        case "shadow":
+            return `
+                <path d="M12 8 C17 3, 27 3, 32 8 L28 18 L16 18 Z" fill="${palette.dark}" opacity="0.96"></path>
+                <path d="M30 27 L38 21" stroke="${palette.secondary}" stroke-width="2.6" stroke-linecap="round"></path>
+            `;
+        default:
+            return `
+                <circle cx="32" cy="23" r="4" fill="${palette.accent}" opacity="0.82"></circle>
+            `;
+        }
     }
 
     function getSlotTeam(slot) {
@@ -3632,8 +3802,16 @@
     }
 
     function getCurrentActorSlot() {
-        const allies = getVisibleTeamSlots(ALLY_CONTAINER_SELECTORS);
-        const activeSlot = allies.find((slot) => {
+        return getCurrentTeamActorSlot(ALLY_CONTAINER_SELECTORS);
+    }
+
+    function getCurrentEnemyActorSlot() {
+        return getCurrentTeamActorSlot(ENEMY_CONTAINER_SELECTORS);
+    }
+
+    function getCurrentTeamActorSlot(selectors) {
+        const slots = getVisibleTeamSlots(selectors);
+        const activeSlot = slots.find((slot) => {
             if (!(slot instanceof HTMLElement)) {
                 return false;
             }
@@ -3645,7 +3823,7 @@
             return /(active|current|turn|selected)/i.test(slot.className);
         });
 
-        return activeSlot || allies.find((slot) => slot.dataset.alive !== "0") || allies[0] || null;
+        return activeSlot || slots.find((slot) => slot.dataset.alive !== "0") || slots[0] || null;
     }
 
     function resolveEffectTarget(effectType, actor) {

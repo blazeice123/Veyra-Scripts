@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         GravyPvP
 // @namespace    https://github.com/blazeice123/Veyra-Scripts
-// @version      2.8
+// @version      3.0
 // @description  Auto joins PvP matches, decorates classes with avatars, and adds animated attack effects.
 // @author       SkuLexX
 // @match        https://demonicscans.org/pvp_battle.php*
@@ -30,6 +30,7 @@
     const LAUNCH_FLAGS = parseLaunchFlags();
     const WORKER_MODE = LAUNCH_FLAGS.worker === "1";
     const WORKER_SESSION_ID = String(LAUNCH_FLAGS.session || "").trim();
+    const SCRIPT_VERSION = "3.0";
     const CONFIG = {
         tickMs: 1200,
         actionCooldownMs: 1000,
@@ -120,7 +121,7 @@
         }
     };
     const SETTING_HELP = {
-        enabled: "Master switch for GravyPvP. Turn this off to pause the hidden worker logic.",
+        enabled: "Master switch for GravyPvP. Start turns this on for you, and Stop turns it off for you.",
         autoJoin: "Automatically continue a solo match or join PvP when the hidden worker is running.",
         autoFight: "Automatically target enemies and use skills once a battle is open.",
         autoReload: "If the hidden worker page looks stuck for a few minutes, reload only that worker page to recover.",
@@ -315,6 +316,18 @@
                 font: 13px/1.4 Verdana, sans-serif;
                 overflow-x: hidden;
                 overflow-y: auto;
+                transition: width 0.18s ease, max-height 0.18s ease, border-radius 0.18s ease, box-shadow 0.18s ease, background 0.18s ease;
+            }
+
+            #${PANEL_ID}.collapsed {
+                width: 52px;
+                max-width: 52px;
+                max-height: 52px;
+                overflow: hidden;
+                border: 0;
+                border-radius: 999px;
+                background: transparent;
+                box-shadow: none;
             }
 
             #${PANEL_ID} .apvp-header {
@@ -340,6 +353,18 @@
             }
 
             #${PANEL_ID}.collapsed .apvp-body {
+                display: none;
+            }
+
+            #${PANEL_ID}.collapsed .apvp-header {
+                width: 52px;
+                height: 52px;
+                padding: 0;
+                border-bottom: 0;
+                background: none;
+            }
+
+            #${PANEL_ID}.collapsed .apvp-title {
                 display: none;
             }
 
@@ -414,6 +439,157 @@
                 border-color: #405163;
             }
 
+            #${PANEL_ID} .apvp-toggle-label {
+                display: inline;
+            }
+
+            #${PANEL_ID} .apvp-toggle-icon {
+                display: none;
+            }
+
+            #${PANEL_ID}.collapsed button[data-action="toggle-panel"] {
+                position: relative;
+                width: 52px;
+                height: 52px;
+                min-width: 52px;
+                min-height: 52px;
+                padding: 0;
+                border: 0;
+                border-radius: 999px;
+                background: transparent;
+                box-shadow: none;
+                overflow: hidden;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+            }
+
+            #${PANEL_ID}.collapsed button[data-action="toggle-panel"]:hover {
+                filter: none;
+            }
+
+            #${PANEL_ID}.collapsed .apvp-toggle-label {
+                display: none;
+            }
+
+            #${PANEL_ID}.collapsed .apvp-toggle-icon {
+                position: relative;
+                display: flex;
+                width: 52px;
+                height: 52px;
+                align-items: center;
+                justify-content: center;
+                pointer-events: none;
+            }
+
+            #${PANEL_ID}.collapsed .apvp-toggle-orb {
+                position: absolute;
+                inset: 5px;
+                border-radius: 999px;
+                background:
+                    radial-gradient(circle at 34% 26%, rgba(255, 162, 162, 0.28) 0%, rgba(143, 33, 46, 0.18) 18%, rgba(57, 11, 18, 0.94) 54%, rgba(15, 4, 8, 1) 100%);
+                box-shadow:
+                    inset 0 1px 0 rgba(255, 235, 235, 0.18),
+                    inset 0 -8px 16px rgba(18, 1, 6, 0.58),
+                    0 0 0 1px rgba(255, 255, 255, 0.06),
+                    0 10px 22px rgba(0, 0, 0, 0.28);
+                animation: apvp-toggle-orb-pulse 1.8s ease-in-out infinite;
+            }
+
+            #${PANEL_ID}.collapsed .apvp-toggle-sword {
+                position: relative;
+                z-index: 2;
+                width: 24px;
+                height: 24px;
+                filter: drop-shadow(0 0 4px rgba(255, 247, 240, 0.18)) drop-shadow(0 1px 1px rgba(0, 0, 0, 0.44));
+            }
+
+            #${PANEL_ID}.collapsed .apvp-toggle-sword::before {
+                content: "";
+                position: absolute;
+                left: 10px;
+                top: 1px;
+                width: 4px;
+                height: 15px;
+                background: linear-gradient(180deg, #fff6f1 0%, #dee8ec 24%, #b9c4ca 62%, #7e878d 100%);
+                clip-path: polygon(50% 0, 100% 18%, 100% 78%, 50% 100%, 0 78%, 0 18%);
+                border-radius: 2px 2px 1px 1px;
+            }
+
+            #${PANEL_ID}.collapsed .apvp-toggle-sword::after {
+                content: "";
+                position: absolute;
+                left: 6px;
+                top: 13px;
+                width: 12px;
+                height: 4px;
+                border-radius: 999px;
+                background: linear-gradient(180deg, #f7d18f 0%, #b07135 100%);
+                box-shadow: 0 0 3px rgba(255, 198, 106, 0.28);
+            }
+
+            #${PANEL_ID}.collapsed .apvp-toggle-hilt {
+                position: absolute;
+                z-index: 2;
+                left: 24px;
+                top: 30px;
+                width: 4px;
+                height: 8px;
+                border-radius: 0 0 3px 3px;
+                background: linear-gradient(180deg, #60351b 0%, #2b120a 100%);
+                transform: translateX(-50%);
+            }
+
+            #${PANEL_ID}.collapsed .apvp-toggle-hilt::after {
+                content: "";
+                position: absolute;
+                left: -2px;
+                bottom: -3px;
+                width: 8px;
+                height: 4px;
+                border-radius: 999px;
+                background: radial-gradient(circle at 50% 35%, #ffcf88 0%, #a0612d 64%, #6f3419 100%);
+            }
+
+            #${PANEL_ID}.collapsed .apvp-toggle-blood {
+                position: absolute;
+                z-index: 1;
+                left: 24px;
+                top: 18px;
+                width: 4px;
+                height: 12px;
+                border-radius: 999px 999px 72% 72%;
+                background: radial-gradient(circle at 35% 25%, #ff9198 0%, #d72938 48%, #710b17 100%);
+                transform: translateX(-50%);
+                transform-origin: top center;
+                animation: apvp-blood-drip-main 1.45s ease-in-out infinite;
+            }
+
+            #${PANEL_ID}.collapsed .apvp-toggle-blood::before,
+            #${PANEL_ID}.collapsed .apvp-toggle-blood::after {
+                content: "";
+                position: absolute;
+                border-radius: 999px 999px 72% 72%;
+                background: radial-gradient(circle at 35% 25%, #ff9198 0%, #d72938 48%, #710b17 100%);
+                transform-origin: top center;
+            }
+
+            #${PANEL_ID}.collapsed .apvp-toggle-blood::before {
+                left: -5px;
+                top: 2px;
+                width: 3px;
+                height: 8px;
+                animation: apvp-blood-drip-side 1.15s ease-in-out infinite 0.12s;
+            }
+
+            #${PANEL_ID}.collapsed .apvp-toggle-blood::after {
+                left: 5px;
+                top: 1px;
+                width: 3px;
+                height: 9px;
+                animation: apvp-blood-drip-side 1.28s ease-in-out infinite 0.3s;
+            }
+
             #${PANEL_ID} .apvp-status {
                 padding: 8px 10px;
                 background: rgba(255, 255, 255, 0.04);
@@ -434,6 +610,19 @@
             #${PANEL_ID} .apvp-muted {
                 color: #aeb9c4;
                 font-size: 12px;
+            }
+
+            #${PANEL_ID} .apvp-footer {
+                display: flex;
+                justify-content: flex-end;
+                align-items: center;
+                margin-top: 2px;
+            }
+
+            #${PANEL_ID} .apvp-version {
+                color: #7c8b9b;
+                font-size: 11px;
+                letter-spacing: 0.02em;
             }
 
             #${PANEL_ID} .apvp-worker {
@@ -481,6 +670,10 @@
                 border: 1px solid rgba(108, 132, 184, 0.22);
                 border-radius: 10px;
                 overflow: hidden;
+            }
+
+            #${PANEL_ID}.apvp-no-fx .apvp-preview {
+                display: none;
             }
 
             #${PANEL_ID} .apvp-preview::before {
@@ -1256,6 +1449,23 @@
                 25% { opacity: 1; }
                 100% { opacity: 0; transform: scale(1.25) translateY(-18px); }
             }
+
+            @keyframes apvp-toggle-orb-pulse {
+                0%, 100% { transform: scale(1); }
+                50% { transform: scale(1.04); }
+            }
+
+            @keyframes apvp-blood-drip-main {
+                0%, 100% { transform: translateX(-50%) scaleY(0.72); opacity: 0.8; }
+                45% { transform: translateX(-50%) translateY(4px) scaleY(1); opacity: 1; }
+                80% { transform: translateX(-50%) translateY(8px) scaleY(0.82); opacity: 0.88; }
+            }
+
+            @keyframes apvp-blood-drip-side {
+                0%, 100% { transform: translateY(0) scaleY(0.7); opacity: 0.76; }
+                50% { transform: translateY(4px) scaleY(1); opacity: 1; }
+                82% { transform: translateY(7px) scaleY(0.86); opacity: 0.84; }
+            }
         `;
 
         document.head.appendChild(style);
@@ -1281,16 +1491,20 @@
             panel.innerHTML = `
                 <div class="apvp-header">
                     <div class="apvp-title">GravyPvP</div>
-                    <button type="button" data-action="toggle-panel">Hide</button>
+                    <button type="button" data-action="toggle-panel" title="Collapse GravyPvP" aria-label="Collapse GravyPvP">
+                        <span class="apvp-toggle-label">Hide</span>
+                        <span class="apvp-toggle-icon" aria-hidden="true">
+                            <span class="apvp-toggle-orb"></span>
+                            <span class="apvp-toggle-sword"></span>
+                            <span class="apvp-toggle-hilt"></span>
+                            <span class="apvp-toggle-blood"></span>
+                        </span>
+                    </button>
                 </div>
                 <div class="apvp-body">
                     <div class="apvp-row">
-                        ${buildCheckboxField("enabled", "Enabled")}
-                        <button type="button" data-action="run-now">Run now</button>
-                    </div>
-                    <div class="apvp-row">
-                        <button type="button" data-action="start-worker" title="Start the hidden PvP worker so the visible page stays idle.">Start BG</button>
-                        <button type="button" data-action="stop-worker" title="Stop the hidden PvP worker and leave the visible page alone.">Stop BG</button>
+                        <button type="button" data-action="start-worker" title="Start the hidden PvP worker so the visible page stays idle.">Start</button>
+                        <button type="button" data-action="stop-worker" title="Stop the hidden PvP worker and leave the visible page alone.">Stop</button>
                     </div>
                     <div class="apvp-worker"></div>
                     <div class="apvp-stats">
@@ -1305,12 +1519,16 @@
                     </div>
                     <div class="apvp-preview"></div>
                     <div class="apvp-row">
+                        ${buildCheckboxField("enabled", "Enabled")}
                         ${buildCheckboxField("autoJoin", "Auto join")}
+                    </div>
+                    <div class="apvp-row">
                         ${buildCheckboxField("autoFight", "Auto fight")}
+                        ${buildCheckboxField("battleVisuals", "Visual FX")}
                     </div>
                     <div class="apvp-row">
                         ${buildCheckboxField("autoReload", "Safe reload")}
-                        ${buildCheckboxField("battleVisuals", "Visual FX")}
+                        <div></div>
                     </div>
                     <div class="apvp-row">
                         <label title="${buildHintTitle("skillNumber")}">Fallback slot <input type="number" min="1" max="9" step="1" data-setting="skillNumber" title="${buildHintTitle("skillNumber")}"></label>
@@ -1320,6 +1538,7 @@
                     <div class="apvp-status"></div>
                     <div class="apvp-error" hidden></div>
                     <div class="apvp-muted"></div>
+                    <div class="apvp-footer"><span class="apvp-version">v${SCRIPT_VERSION}</span></div>
                 </div>
             `;
         }
@@ -1334,6 +1553,7 @@
         }
 
         panel.classList.toggle("collapsed", !settings.expanded);
+        panel.classList.toggle("apvp-no-fx", !settings.battleVisuals);
 
         syncCheckbox(panel, "enabled", settings.enabled);
         syncCheckbox(panel, "autoJoin", settings.autoJoin);
@@ -1356,7 +1576,13 @@
 
         const toggleButton = panel.querySelector('button[data-action="toggle-panel"]');
         if (toggleButton instanceof HTMLButtonElement) {
-            toggleButton.textContent = settings.expanded ? "Hide" : "Show";
+            const toggleLabel = toggleButton.querySelector(".apvp-toggle-label");
+            if (toggleLabel) {
+                toggleLabel.textContent = settings.expanded ? "Hide" : "Show";
+            }
+            const buttonLabel = settings.expanded ? "Collapse GravyPvP" : "Open GravyPvP";
+            toggleButton.title = buttonLabel;
+            toggleButton.setAttribute("aria-label", buttonLabel);
         }
 
         const currentStats = getBattleStats();
@@ -1376,20 +1602,23 @@
         }
 
         const workerNode = panel.querySelector(".apvp-worker");
+        const workerState = getCurrentWorkerState();
         if (workerNode) {
-            workerNode.textContent = getWorkerSummaryText();
+            workerNode.textContent = workerState.text;
         }
 
-        syncPreviewPanel(panel);
+        if (settings.battleVisuals) {
+            syncPreviewPanel(panel);
+        }
 
         const startWorkerButton = panel.querySelector('button[data-action="start-worker"]');
         if (startWorkerButton instanceof HTMLButtonElement) {
-            startWorkerButton.disabled = hasBackgroundWorkerSession();
+            startWorkerButton.disabled = workerState.active;
         }
 
         const stopWorkerButton = panel.querySelector('button[data-action="stop-worker"]');
         if (stopWorkerButton instanceof HTMLButtonElement) {
-            stopWorkerButton.disabled = !hasBackgroundWorkerSession();
+            stopWorkerButton.disabled = !workerState.active;
         }
 
         const errorNode = panel.querySelector(".apvp-error");
@@ -1665,6 +1894,12 @@
         }
 
         saveSettings();
+
+        if (!WORKER_MODE && settingName === "enabled" && !target.checked && getCurrentWorkerState().active) {
+            stopBackgroundWorker("Stopped hidden background worker");
+            return;
+        }
+
         syncPanelState();
         touchProgress();
         scheduleTick();
@@ -1686,17 +1921,6 @@
             settings.expanded = !settings.expanded;
             saveSettings();
             syncPanelState();
-            return;
-        }
-
-        if (action === "run-now") {
-            if (!WORKER_MODE && !hasBackgroundWorkerSession()) {
-                startBackgroundWorker();
-                return;
-            }
-
-            updateStatus("Manual run requested");
-            scheduleTick(10);
             return;
         }
 
@@ -1878,6 +2102,23 @@
         }
     }
 
+    function clearWorkerSessionState(sessionId = "") {
+        const normalizedSession = String(sessionId || workerSession || localStorage.getItem(WORKER_SESSION_KEY) || "").trim();
+        if (normalizedSession) {
+            clearWorkerCommand(normalizedSession);
+        }
+
+        workerSession = "";
+        if (workerFrame) {
+            workerFrame.remove();
+            workerFrame = null;
+        }
+
+        localStorage.removeItem(WORKER_SESSION_KEY);
+        localStorage.removeItem(WORKER_REPORT_KEY);
+        localStorage.removeItem(WORKER_COMMAND_KEY);
+    }
+
     function shouldStopWorkerSession() {
         if (!WORKER_MODE) {
             return false;
@@ -1907,12 +2148,19 @@
     }
 
     function startBackgroundWorker() {
-        if (WORKER_MODE || hasBackgroundWorkerSession()) {
+        if (WORKER_MODE) {
+            syncPanelState();
+            return;
+        }
+
+        if (getCurrentWorkerState().active) {
             syncPanelState();
             return;
         }
 
         const sessionId = buildWorkerSessionId();
+        settings.enabled = true;
+        saveSettings();
         workerSession = sessionId;
         localStorage.setItem(WORKER_SESSION_KEY, sessionId);
         clearWorkerCommand(sessionId);
@@ -1930,24 +2178,18 @@
             publishWorkerCommand("stop", sessionId, message);
         }
 
-        if (workerFrame) {
-            workerFrame.remove();
-            workerFrame = null;
-        }
-
         if (sessionId) {
             publishWorkerReport("stopped", message, sessionId);
         }
 
-        workerSession = "";
+        settings.enabled = false;
+        saveSettings();
         previewState = buildPreviewState({
             actionText: "Background idle",
             phase: "idle",
             eventId: Date.now()
         });
-        localStorage.removeItem(WORKER_SESSION_KEY);
-        localStorage.removeItem(WORKER_REPORT_KEY);
-        localStorage.removeItem(WORKER_COMMAND_KEY);
+        clearWorkerSessionState(sessionId);
         updateStatus(message);
     }
 
@@ -1997,6 +2239,11 @@
             return { active: false, text: "Background worker idle" };
         }
 
+        if (!WORKER_MODE && !workerFrame?.isConnected) {
+            clearWorkerSessionState(sessionId);
+            return { active: false, text: "Background worker idle" };
+        }
+
         const matchingReport = report && report.sessionId === sessionId ? report : null;
         const fresh = matchingReport
             && (Date.now() - Number(matchingReport.updatedAt || 0)) <= CONFIG.workerStaleMs
@@ -2009,6 +2256,10 @@
                 active: true,
                 text: `${detail}${path}`
             };
+        }
+
+        if (!WORKER_MODE) {
+            clearWorkerSessionState(sessionId);
         }
 
         return { active: false, text: "Background worker idle" };
@@ -2177,7 +2428,7 @@
             }
 
             if (!WORKER_MODE) {
-                const dashboardText = "Dashboard idle. Click Start BG to run hidden fights.";
+                const dashboardText = "Dashboard idle. Click Start to run hidden fights.";
                 if (statusText !== dashboardText) {
                     updateStatus(dashboardText);
                 } else {

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         GravyPvP
 // @namespace    https://github.com/blazeice123/Veyra-Scripts
-// @version      3.9
+// @version      3.11
 // @description  Auto joins PvP matches, decorates classes with avatars, and adds animated attack effects.
 // @author       SkuLexX
 // @match        https://demonicscans.org/pvp_battle.php*
@@ -30,7 +30,7 @@
     const LAUNCH_FLAGS = parseLaunchFlags();
     const WORKER_MODE = LAUNCH_FLAGS.worker === "1";
     const WORKER_SESSION_ID = String(LAUNCH_FLAGS.session || "").trim();
-    const SCRIPT_VERSION = "3.9";
+    const SCRIPT_VERSION = "3.11";
     const CONFIG = {
         tickMs: 1200,
         actionCooldownMs: 1000,
@@ -166,6 +166,7 @@
     let lastEnemyPreviewAt = 0;
     let lastEnemyPreviewKey = "";
     let scheduledEnemyPreviewTimer = 0;
+    let forceStartNow = false;
 
     window.addEventListener("error", (event) => {
         if (!shouldCaptureGlobalError(event?.error, event?.filename, event?.message)) {
@@ -416,6 +417,10 @@
                 gap: 10px;
             }
 
+            #${PANEL_ID} .apvp-row.apvp-row-single {
+                grid-template-columns: 1fr;
+            }
+
             #${PANEL_ID} label {
                 display: flex;
                 align-items: center;
@@ -479,6 +484,18 @@
                 opacity: 1;
                 cursor: default;
                 filter: none;
+            }
+
+            #${PANEL_ID} button[data-action="start-now"] {
+                background: linear-gradient(135deg, #6f4b18, #b67729);
+                border-color: #d7a04c;
+            }
+
+            #${PANEL_ID} button[data-action="start-now"][data-armed="1"] {
+                background: linear-gradient(135deg, #8c5a18, #d3922b);
+                border-color: #f0be6d;
+                box-shadow: 0 0 0 0 rgba(240, 190, 109, 0.26);
+                animation: apvp-monitor-pulse 1.4s ease-in-out infinite;
             }
 
             #${PANEL_ID} .apvp-row > * {
@@ -1941,6 +1958,9 @@
                         <button type="button" data-action="stop-worker" title="Stop the hidden PvP worker and leave the visible page alone.">Stop</button>
                     </div>
                     <div class="apvp-worker"></div>
+                    <div class="apvp-row apvp-row-single">
+                        <button type="button" data-action="start-now" title="Override token banking and start with the current tokens for this run.">Start now</button>
+                    </div>
                     <div class="apvp-stats">
                         <div class="apvp-stat">
                             <span class="apvp-stat-label">Wins</span>
@@ -2040,6 +2060,18 @@
             startWorkerButton.title = workerState.active
                 ? "Hidden PvP worker is running and monitoring tokens in the background."
                 : "Start the hidden PvP worker so the visible page stays idle.";
+        }
+
+        const startNowButton = panel.querySelector('button[data-action="start-now"]');
+        if (startNowButton instanceof HTMLButtonElement) {
+            startNowButton.disabled = !workerState.active || workerState.forceStartNow;
+            startNowButton.dataset.armed = workerState.forceStartNow ? "1" : "0";
+            startNowButton.textContent = workerState.forceStartNow ? "Start now armed" : "Start now";
+            startNowButton.title = !workerState.active
+                ? "Start the hidden worker first."
+                : workerState.forceStartNow
+                    ? "Immediate start override is armed for this run."
+                    : "Override token banking and start with the current tokens for this run.";
         }
 
         const stopWorkerButton = panel.querySelector('button[data-action="stop-worker"]');
@@ -2363,6 +2395,11 @@
             return;
         }
 
+        if (action === "start-now") {
+            requestImmediateStart();
+            return;
+        }
+
         if (action === "stop-worker") {
             stopBackgroundWorker("Stopped hidden background worker");
             return;
@@ -2442,6 +2479,24 @@
         saveSettings();
         syncPanelState();
         updateStatus(`${normalizedSkill} ${isSkillDisabled(classKey, normalizedSkill) ? "disabled" : "enabled"} for ${getClassProfile(classKey).label}`);
+    }
+
+    function requestImmediateStart() {
+        if (WORKER_MODE) {
+            forceStartNow = true;
+            updateStatus("Lobby: start now override armed");
+            return;
+        }
+
+        const workerState = getCurrentWorkerState();
+        const sessionId = String(workerSession || localStorage.getItem(WORKER_SESSION_KEY) || "").trim();
+        if (!workerState.active || !sessionId) {
+            syncPanelState();
+            return;
+        }
+
+        publishWorkerCommand("start_now", sessionId, "Immediate start override requested");
+        updateStatus("Start now override requested");
     }
 
     function resetSkillPriority() {
@@ -2562,6 +2617,23 @@
         return command?.sessionId === WORKER_SESSION_ID && command.command === "stop";
     }
 
+    function consumeImmediateStartCommand() {
+        if (!WORKER_MODE) {
+            return false;
+        }
+
+        const command = readWorkerCommand();
+        if (command?.sessionId !== WORKER_SESSION_ID || command.command !== "start_now") {
+            return false;
+        }
+
+        forceStartNow = true;
+        clearWorkerCommand(WORKER_SESSION_ID);
+        updateStatus("Lobby: start now override armed");
+        touchProgress();
+        return true;
+    }
+
     function closeCurrentWorkerSoon() {
         if (!WORKER_MODE) {
             return;
@@ -2617,6 +2689,7 @@
         }
 
         settings.enabled = false;
+        forceStartNow = false;
         saveSettings();
         previewState = buildPreviewState({
             actionText: "Background idle",
@@ -2658,7 +2731,8 @@
             detail: String(detail || ""),
             path: `${location.pathname}${location.search}`,
             updatedAt: Date.now(),
-            preview
+            preview,
+            forceStartNow
         }));
 
         if (phase === "stopped") {
@@ -2670,12 +2744,12 @@
         const report = readWorkerReport();
         const sessionId = String(workerSession || localStorage.getItem(WORKER_SESSION_KEY) || "").trim();
         if (!sessionId) {
-            return { active: false, text: "Background worker idle" };
+            return { active: false, text: "Background worker idle", forceStartNow: false };
         }
 
         if (!WORKER_MODE && !workerFrame?.isConnected) {
             clearWorkerSessionState(sessionId);
-            return { active: false, text: "Background worker idle" };
+            return { active: false, text: "Background worker idle", forceStartNow: false };
         }
 
         const matchingReport = report && report.sessionId === sessionId ? report : null;
@@ -2688,7 +2762,8 @@
             const path = matchingReport?.path ? ` on ${matchingReport.path}` : "";
             return {
                 active: true,
-                text: `${detail}${path}`
+                text: `${detail}${path}`,
+                forceStartNow: !!matchingReport?.forceStartNow
             };
         }
 
@@ -2696,7 +2771,7 @@
             clearWorkerSessionState(sessionId);
         }
 
-        return { active: false, text: "Background worker idle" };
+        return { active: false, text: "Background worker idle", forceStartNow: false };
     }
 
     function getWorkerSummaryText() {
@@ -2831,6 +2906,8 @@
                 return;
             }
 
+            consumeImmediateStartCommand();
+
             if (isBattlePage()) {
                 if (!battlePageEnteredAt) {
                     battlePageEnteredAt = Date.now();
@@ -2926,6 +3003,7 @@
         const shouldMonitorTokens = WORKER_MODE && settings.enabled;
         const readyTokenCount = Number(CONFIG.readyTokenCount) || 30;
         const tokenGoalLabel = `${readyTokenCount} tokens`;
+        const activeTokenThreshold = forceStartNow ? 1 : readyTokenCount;
 
         if (continueButton) {
             recordPreviewEvent("Continuing solo match", "", {
@@ -2944,10 +3022,14 @@
             return;
         }
 
-        if (!Number.isFinite(tokens) || tokens < readyTokenCount) {
-            const waitingText = Number.isFinite(tokens)
-                ? `Lobby: banking tokens ${tokens}/${readyTokenCount} in background`
-                : `Lobby: banking tokens in background, waiting for ${tokenGoalLabel}`;
+        if (!Number.isFinite(tokens) || tokens < activeTokenThreshold) {
+            const waitingText = forceStartNow
+                ? (Number.isFinite(tokens)
+                    ? `Lobby: start now armed. Waiting for tokens ${tokens}/1 to begin immediately.`
+                    : "Lobby: start now armed. Waiting for the next token to begin immediately.")
+                : (Number.isFinite(tokens)
+                    ? `Lobby: banking tokens ${tokens}/${readyTokenCount} in background. Will start at ${readyTokenCount} to optimize win rate.`
+                    : `Lobby: banking tokens in background, waiting for ${tokenGoalLabel}. Will start when full to optimize win rate.`);
             if (shouldMonitorTokens && maybeRefreshLobbyMonitor(waitingText)) {
                 return;
             }
@@ -2969,6 +3051,7 @@
         }
 
         lastJoinAt = Date.now();
+        forceStartNow = false;
         recordPreviewEvent("Joined PvP matchmaking", "", {
             allyClass: getSelectedPlayerClassKey() || "adventurer",
             phase: "idle"

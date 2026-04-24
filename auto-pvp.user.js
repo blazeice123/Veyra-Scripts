@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         GravyPvP
 // @namespace    https://github.com/blazeice123/Veyra-Scripts
-// @version      3.11
+// @version      3.12
 // @description  Auto joins PvP matches, decorates classes with avatars, and adds animated attack effects.
 // @author       SkuLexX
 // @match        https://demonicscans.org/pvp_battle.php*
@@ -30,7 +30,7 @@
     const LAUNCH_FLAGS = parseLaunchFlags();
     const WORKER_MODE = LAUNCH_FLAGS.worker === "1";
     const WORKER_SESSION_ID = String(LAUNCH_FLAGS.session || "").trim();
-    const SCRIPT_VERSION = "3.11";
+    const SCRIPT_VERSION = "3.12";
     const CONFIG = {
         tickMs: 1200,
         actionCooldownMs: 1000,
@@ -1958,7 +1958,7 @@
                         <button type="button" data-action="stop-worker" title="Stop the hidden PvP worker and leave the visible page alone.">Stop</button>
                     </div>
                     <div class="apvp-worker"></div>
-                    <div class="apvp-row apvp-row-single">
+                    <div class="apvp-row apvp-row-single apvp-start-now-row">
                         <button type="button" data-action="start-now" title="Override token banking and start with the current tokens for this run.">Start now</button>
                     </div>
                     <div class="apvp-stats">
@@ -2046,6 +2046,11 @@
         const workerState = getCurrentWorkerState();
         if (workerNode) {
             workerNode.textContent = workerState.text;
+        }
+
+        const startNowRow = panel.querySelector(".apvp-start-now-row");
+        if (startNowRow instanceof HTMLElement) {
+            startNowRow.hidden = !workerState.showStartNow;
         }
 
         if (settings.battleVisuals) {
@@ -2744,12 +2749,12 @@
         const report = readWorkerReport();
         const sessionId = String(workerSession || localStorage.getItem(WORKER_SESSION_KEY) || "").trim();
         if (!sessionId) {
-            return { active: false, text: "Background worker idle", forceStartNow: false };
+            return { active: false, text: "Background worker idle", forceStartNow: false, showStartNow: false };
         }
 
         if (!WORKER_MODE && !workerFrame?.isConnected) {
             clearWorkerSessionState(sessionId);
-            return { active: false, text: "Background worker idle", forceStartNow: false };
+            return { active: false, text: "Background worker idle", forceStartNow: false, showStartNow: false };
         }
 
         const matchingReport = report && report.sessionId === sessionId ? report : null;
@@ -2760,10 +2765,14 @@
         if (workerFrame?.isConnected || fresh) {
             const detail = matchingReport?.detail || "Background worker active";
             const path = matchingReport?.path ? ` on ${matchingReport.path}` : "";
+            const showStartNow = !!matchingReport
+                && /\/pvp\.php/i.test(String(matchingReport.path || ""))
+                && /banking tokens|start now armed|start now override armed/i.test(String(matchingReport.detail || ""));
             return {
                 active: true,
                 text: `${detail}${path}`,
-                forceStartNow: !!matchingReport?.forceStartNow
+                forceStartNow: !!matchingReport?.forceStartNow,
+                showStartNow
             };
         }
 
@@ -2771,7 +2780,7 @@
             clearWorkerSessionState(sessionId);
         }
 
-        return { active: false, text: "Background worker idle", forceStartNow: false };
+        return { active: false, text: "Background worker idle", forceStartNow: false, showStartNow: false };
     }
 
     function getWorkerSummaryText() {

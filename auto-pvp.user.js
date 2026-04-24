@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         GravyPvP
 // @namespace    https://github.com/blazeice123/Veyra-Scripts
-// @version      2.7
+// @version      2.8
 // @description  Auto joins PvP matches, decorates classes with avatars, and adds animated attack effects.
 // @author       SkuLexX
 // @match        https://demonicscans.org/pvp_battle.php*
@@ -22,6 +22,7 @@
     const STAGE_ID = "gravy-pvp-stage";
     const WORKER_HOST_ID = "gravy-pvp-worker-host";
     const SETTINGS_KEY = "gravy_pvp_settings_v1";
+    const STATS_KEY = "gravy_pvp_stats_v1";
     const WORKER_REPORT_KEY = "gravy_pvp_worker_report_v1";
     const WORKER_SESSION_KEY = "gravy_pvp_worker_session_v1";
     const WORKER_COMMAND_KEY = "gravy_pvp_worker_command_v1";
@@ -118,8 +119,18 @@
             colors: ["#7f86a7", "#c0a6ff"]
         }
     };
+    const SETTING_HELP = {
+        enabled: "Master switch for GravyPvP. Turn this off to pause the hidden worker logic.",
+        autoJoin: "Automatically continue a solo match or join PvP when the hidden worker is running.",
+        autoFight: "Automatically target enemies and use skills once a battle is open.",
+        autoReload: "If the hidden worker page looks stuck for a few minutes, reload only that worker page to recover.",
+        battleVisuals: "Show the little class characters and spell effects inside the panel preview.",
+        skillNumber: "Fallback skill slot to use when no saved skill priority matches.",
+        playerClass: "Pick your class manually, or leave it on Auto so GravyPvP guesses from the page."
+    };
 
     let settings = loadSettings();
+    let battleStats = loadBattleStats();
     let busy = false;
     let scheduledTick = 0;
     let scheduledVisualRefresh = 0;
@@ -135,6 +146,7 @@
     let workerSession = !WORKER_MODE ? String(localStorage.getItem(WORKER_SESSION_KEY) || "").trim() : WORKER_SESSION_ID;
     let previewState = buildPreviewState();
     let battleNoTargetLoops = 0;
+    let battleOutcomeHandled = false;
 
     window.addEventListener("error", (event) => {
         const message = event?.error?.message || event?.message || "Unknown script error";
@@ -218,6 +230,67 @@
         return normalized;
     }
 
+    function loadBattleStats() {
+        try {
+            const stored = JSON.parse(localStorage.getItem(STATS_KEY) || "{}");
+            return normalizeBattleStats(stored);
+        } catch (error) {
+            console.warn("GravyPvP: failed to read battle stats", error);
+            return normalizeBattleStats({});
+        }
+    }
+
+    function normalizeBattleStats(input) {
+        const wins = toNonNegativeInt(input?.wins);
+        const losses = toNonNegativeInt(input?.losses);
+        const updatedAt = toNonNegativeInt(input?.updatedAt);
+        const lastOutcome = input?.lastOutcome === "win" || input?.lastOutcome === "loss" ? input.lastOutcome : "";
+        return {
+            wins,
+            losses,
+            updatedAt,
+            lastOutcome
+        };
+    }
+
+    function toNonNegativeInt(value) {
+        const parsed = Number.parseInt(value, 10);
+        return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
+    }
+
+    function saveBattleStats() {
+        battleStats = normalizeBattleStats(battleStats);
+        localStorage.setItem(STATS_KEY, JSON.stringify(battleStats));
+    }
+
+    function getBattleStats() {
+        battleStats = loadBattleStats();
+        return battleStats;
+    }
+
+    function recordBattleOutcome(outcome) {
+        if (battleOutcomeHandled) {
+            return;
+        }
+
+        if (outcome !== "win" && outcome !== "loss") {
+            return;
+        }
+
+        battleOutcomeHandled = true;
+        battleStats = getBattleStats();
+
+        if (outcome === "win") {
+            battleStats.wins += 1;
+        } else {
+            battleStats.losses += 1;
+        }
+
+        battleStats.lastOutcome = outcome;
+        battleStats.updatedAt = Date.now();
+        saveBattleStats();
+    }
+
     function installStyles() {
         if (document.getElementById(STYLE_ID)) {
             return;
@@ -283,6 +356,11 @@
                 gap: 8px;
                 cursor: pointer;
                 min-width: 0;
+            }
+
+            #${PANEL_ID} label[title] {
+                text-decoration: underline dotted rgba(255, 255, 255, 0.16);
+                text-underline-offset: 3px;
             }
 
             #${PANEL_ID} input[type="checkbox"] {
@@ -365,6 +443,35 @@
                 border: 1px solid rgba(111, 144, 255, 0.24);
                 border-radius: 8px;
                 font-size: 12px;
+            }
+
+            #${PANEL_ID} .apvp-stats {
+                display: grid;
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+                gap: 8px;
+            }
+
+            #${PANEL_ID} .apvp-stat {
+                padding: 8px 10px;
+                background: rgba(255, 255, 255, 0.05);
+                border: 1px solid rgba(255, 255, 255, 0.08);
+                border-radius: 8px;
+            }
+
+            #${PANEL_ID} .apvp-stat-label {
+                display: block;
+                color: #9db0c4;
+                font-size: 11px;
+                letter-spacing: 0.02em;
+                text-transform: uppercase;
+            }
+
+            #${PANEL_ID} .apvp-stat-value {
+                display: block;
+                margin-top: 2px;
+                color: #f6fbff;
+                font-size: 18px;
+                font-weight: 700;
             }
 
             #${PANEL_ID} .apvp-preview {
@@ -1154,6 +1261,15 @@
         document.head.appendChild(style);
     }
 
+    function buildCheckboxField(settingName, labelText) {
+        const helpText = escapeHtml(SETTING_HELP[settingName] || labelText);
+        return `<label title="${helpText}"><input type="checkbox" data-setting="${settingName}" title="${helpText}">${labelText}</label>`;
+    }
+
+    function buildHintTitle(key) {
+        return escapeHtml(SETTING_HELP[key] || "");
+    }
+
     function renderPanel() {
         let panel = document.getElementById(PANEL_ID);
         if (!panel) {
@@ -1169,26 +1285,36 @@
                 </div>
                 <div class="apvp-body">
                     <div class="apvp-row">
-                        <label><input type="checkbox" data-setting="enabled">Enabled</label>
+                        ${buildCheckboxField("enabled", "Enabled")}
                         <button type="button" data-action="run-now">Run now</button>
                     </div>
                     <div class="apvp-row">
-                        <button type="button" data-action="start-worker">Start BG</button>
-                        <button type="button" data-action="stop-worker">Stop BG</button>
+                        <button type="button" data-action="start-worker" title="Start the hidden PvP worker so the visible page stays idle.">Start BG</button>
+                        <button type="button" data-action="stop-worker" title="Stop the hidden PvP worker and leave the visible page alone.">Stop BG</button>
                     </div>
                     <div class="apvp-worker"></div>
+                    <div class="apvp-stats">
+                        <div class="apvp-stat">
+                            <span class="apvp-stat-label">Wins</span>
+                            <span class="apvp-stat-value" data-stat="wins">0</span>
+                        </div>
+                        <div class="apvp-stat">
+                            <span class="apvp-stat-label">Losses</span>
+                            <span class="apvp-stat-value" data-stat="losses">0</span>
+                        </div>
+                    </div>
                     <div class="apvp-preview"></div>
                     <div class="apvp-row">
-                        <label><input type="checkbox" data-setting="autoJoin">Auto join</label>
-                        <label><input type="checkbox" data-setting="autoFight">Auto fight</label>
+                        ${buildCheckboxField("autoJoin", "Auto join")}
+                        ${buildCheckboxField("autoFight", "Auto fight")}
                     </div>
                     <div class="apvp-row">
-                        <label><input type="checkbox" data-setting="autoReload">Safe reload</label>
-                        <label><input type="checkbox" data-setting="battleVisuals">Visual FX</label>
+                        ${buildCheckboxField("autoReload", "Safe reload")}
+                        ${buildCheckboxField("battleVisuals", "Visual FX")}
                     </div>
                     <div class="apvp-row">
-                        <label>Fallback slot <input type="number" min="1" max="9" step="1" data-setting="skillNumber"></label>
-                        <label>Class ${buildClassSelect()}</label>
+                        <label title="${buildHintTitle("skillNumber")}">Fallback slot <input type="number" min="1" max="9" step="1" data-setting="skillNumber" title="${buildHintTitle("skillNumber")}"></label>
+                        <label title="${buildHintTitle("playerClass")}">Class ${buildClassSelect()}</label>
                     </div>
                     <div class="apvp-priority"></div>
                     <div class="apvp-status"></div>
@@ -1224,10 +1350,24 @@
         if (classSelect instanceof HTMLSelectElement && classSelect.value !== settings.playerClass) {
             classSelect.value = settings.playerClass;
         }
+        if (classSelect instanceof HTMLSelectElement) {
+            classSelect.title = SETTING_HELP.playerClass;
+        }
 
         const toggleButton = panel.querySelector('button[data-action="toggle-panel"]');
         if (toggleButton instanceof HTMLButtonElement) {
             toggleButton.textContent = settings.expanded ? "Hide" : "Show";
+        }
+
+        const currentStats = getBattleStats();
+        const winsNode = panel.querySelector('[data-stat="wins"]');
+        if (winsNode) {
+            winsNode.textContent = String(currentStats.wins);
+        }
+
+        const lossesNode = panel.querySelector('[data-stat="losses"]');
+        if (lossesNode) {
+            lossesNode.textContent = String(currentStats.losses);
         }
 
         const statusNode = panel.querySelector(".apvp-status");
@@ -1305,21 +1445,25 @@
         }
 
         const preview = getCurrentPreviewState();
-        const renderKey = JSON.stringify([
-            preview.allyClass,
-            preview.enemyClass,
-            preview.effectType,
-            preview.actionText,
-            preview.phase,
-            preview.eventId
-        ]);
-
-        if (container.dataset.renderKey === renderKey) {
-            return;
+        if (!container.querySelector(".apvp-preview-stage")) {
+            container.innerHTML = buildPreviewMarkup(preview);
         }
 
-        container.dataset.renderKey = renderKey;
-        container.innerHTML = buildPreviewMarkup(preview);
+        const allySide = container.querySelector(".apvp-preview-side.ally");
+        const enemySide = container.querySelector(".apvp-preview-side.enemy");
+        const allyVisual = allySide?.querySelector(".apvp-slot-visual");
+        const enemyVisual = enemySide?.querySelector(".apvp-slot-visual");
+        const labelNode = container.querySelector(".apvp-preview-label");
+
+        syncPreviewAvatar(allyVisual, preview.allyClass, "ally");
+        syncPreviewAvatar(enemyVisual, preview.enemyClass || "shadow", "enemy");
+        syncPreviewPhase(allySide, "apvp-preview-cast", preview.phase === "action" || preview.phase === "cast", preview.eventId);
+        syncPreviewPhase(enemySide, "apvp-preview-hit", preview.phase === "action" || preview.phase === "hit", preview.eventId);
+        syncPreviewEffect(container, preview);
+
+        if (labelNode) {
+            labelNode.textContent = preview.actionText || "Standing by";
+        }
     }
 
     function buildPreviewMarkup(preview) {
@@ -1342,6 +1486,68 @@
             </div>
             <div class="apvp-preview-label">${escapeHtml(preview.actionText || "Standing by")}</div>
         `;
+    }
+
+    function syncPreviewAvatar(node, classKey, team) {
+        if (!(node instanceof HTMLElement)) {
+            return;
+        }
+
+        const rawClass = String(classKey || "").trim().toLowerCase();
+        const normalizedClass = rawClass && rawClass !== "auto" ? rawClass : "adventurer";
+        const profile = getClassProfile(normalizedClass);
+        if (node.dataset.class !== normalizedClass || node.dataset.team !== team || !node.firstElementChild) {
+            node.dataset.class = normalizedClass;
+            node.dataset.team = team;
+            node.innerHTML = buildAvatarMarkup(profile.label);
+        }
+    }
+
+    function syncPreviewPhase(node, className, active, eventId) {
+        if (!(node instanceof HTMLElement)) {
+            return;
+        }
+
+        const eventKey = String(eventId || 0);
+        const phaseKey = `${className}:${eventKey}`;
+        if (!active) {
+            node.classList.remove(className);
+            return;
+        }
+
+        if (node.dataset.phaseKey === phaseKey && node.classList.contains(className)) {
+            return;
+        }
+
+        node.dataset.phaseKey = phaseKey;
+        node.classList.remove(className);
+        void node.offsetWidth;
+        node.classList.add(className);
+    }
+
+    function syncPreviewEffect(container, preview) {
+        const center = container.querySelector(".apvp-preview-center");
+        if (!(center instanceof HTMLElement)) {
+            return;
+        }
+
+        const effectKey = `${preview.effectType || ""}:${preview.eventId || 0}`;
+        if (center.dataset.effectKey === effectKey) {
+            return;
+        }
+
+        center.dataset.effectKey = effectKey;
+        const effectNode = document.createElement("div");
+        effectNode.className = "apvp-preview-effect";
+        effectNode.dataset.effect = preview.effectType || "";
+        effectNode.dataset.event = String(preview.eventId || 0);
+
+        const oldNode = center.querySelector(".apvp-preview-effect");
+        if (oldNode) {
+            oldNode.replaceWith(effectNode);
+        } else {
+            center.appendChild(effectNode);
+        }
     }
 
     function recordPreviewEvent(actionText, effectType = "", options = {}) {
@@ -1484,6 +1690,11 @@
         }
 
         if (action === "run-now") {
+            if (!WORKER_MODE && !hasBackgroundWorkerSession()) {
+                startBackgroundWorker();
+                return;
+            }
+
             updateStatus("Manual run requested");
             scheduleTick(10);
             return;
@@ -1938,6 +2149,7 @@
             if (isBattlePage()) {
                 if (!battlePageEnteredAt) {
                     battlePageEnteredAt = Date.now();
+                    battleOutcomeHandled = false;
                 }
 
                 const visibleSkillButtons = getSkillButtons();
@@ -1947,6 +2159,7 @@
             } else {
                 battlePageEnteredAt = 0;
                 battleNoTargetLoops = 0;
+                battleOutcomeHandled = false;
             }
 
             if (!settings.enabled) {
@@ -1957,6 +2170,16 @@
             if (!WORKER_MODE && hasBackgroundWorkerSession()) {
                 if (statusText !== getWorkerSummaryText()) {
                     updateStatus(getWorkerSummaryText());
+                } else {
+                    syncPanelState();
+                }
+                return;
+            }
+
+            if (!WORKER_MODE) {
+                const dashboardText = "Dashboard idle. Click Start BG to run hidden fights.";
+                if (statusText !== dashboardText) {
+                    updateStatus(dashboardText);
                 } else {
                     syncPanelState();
                 }
@@ -2052,7 +2275,21 @@
     async function handleBattlePage() {
         clearError();
 
-        if (await maybeLeaveFinishedBattle()) {
+        const resolution = getBattleResolutionState();
+
+        if (await maybeLeaveFinishedBattle(resolution)) {
+            return;
+        }
+
+        if (resolution.finished) {
+            recordBattleOutcome(resolution.outcome);
+            const outcomeLabel = resolution.outcome === "loss" ? "Defeat" : resolution.outcome === "win" ? "Victory" : "Battle over";
+            recordPreviewEvent(outcomeLabel, "", {
+                allyClass: getSelectedPlayerClassKey() || previewState.allyClass || "adventurer",
+                enemyClass: previewState.enemyClass || "shadow",
+                phase: "idle"
+            });
+            updateStatus(`Battle: ${outcomeLabel.toLowerCase()} detected, waiting for return`);
             return;
         }
 
@@ -2082,45 +2319,166 @@
         await targetLowestHpEnemy();
     }
 
-    async function maybeLeaveFinishedBattle() {
+    async function maybeLeaveFinishedBattle(resolution = getBattleResolutionState()) {
+        const backButton = resolution.backButton;
+        if (!backButton || !isClickable(backButton)) {
+            return false;
+        }
+
+        const pageSettled = battlePageEnteredAt > 0 && Date.now() - battlePageEnteredAt >= 2500;
+        if (!resolution.finished && !pageSettled) {
+            return false;
+        }
+
+        if (!resolution.finished) {
+            return false;
+        }
+
+        recordBattleOutcome(resolution.outcome);
+        battleNoTargetLoops = 0;
+        const outcomeLabel = resolution.outcome === "loss" ? "Defeat" : resolution.outcome === "win" ? "Victory" : "Battle finished";
+        recordPreviewEvent(outcomeLabel, "", {
+            allyClass: getSelectedPlayerClassKey() || previewState.allyClass || "adventurer",
+            enemyClass: previewState.enemyClass || "shadow",
+            phase: "idle"
+        });
+        clickElement(backButton, `${outcomeLabel}, returning`);
+        return true;
+    }
+
+    function getBattleResolutionState() {
         const backButton = findVisibleElement([
             ".back-btn",
             "button.back-btn",
             "a.back-btn",
             ".result-actions .back-btn"
         ]);
+        const resultText = getBattleResultText();
+        const textOutcome = detectOutcomeFromText(resultText);
+        const enemyState = summarizeTeamSlots(getBattleTeamSlots(ENEMY_CONTAINER_SELECTORS, "enemy"));
+        const allyState = summarizeTeamSlots(getBattleTeamSlots(ALLY_CONTAINER_SELECTORS, "ally"));
+        const outcome = textOutcome || (enemyState.defeated ? "win" : "") || (allyState.defeated ? "loss" : "");
+        const genericResult = /battle over|match over|finished|results?/i.test(resultText);
 
-        if (!backButton || !isClickable(backButton)) {
+        return {
+            backButton,
+            outcome,
+            finished: Boolean(outcome || genericResult),
+            resultText,
+            enemyState,
+            allyState
+        };
+    }
+
+    function getBattleResultText() {
+        const selectors = [
+            ".result",
+            ".battle-result",
+            ".match-result",
+            ".toast",
+            ".notice",
+            ".modal.show",
+            ".popup",
+            ".result-title",
+            ".result-text",
+            ".battle-log .highlight",
+            ".battle-log .system",
+            ".battleOutcome"
+        ];
+
+        const text = [];
+        for (const selector of selectors) {
+            const elements = document.querySelectorAll(selector);
+            for (const element of elements) {
+                if (element?.textContent) {
+                    text.push(element.textContent);
+                }
+            }
+        }
+
+        return text.join(" ").replace(/\s+/g, " ").trim();
+    }
+
+    function detectOutcomeFromText(text) {
+        const value = String(text || "").toLowerCase();
+        if (!value) {
+            return "";
+        }
+
+        if (/victory|winner|you win|won the match|match won|battle won|you are victorious/i.test(value)) {
+            return "win";
+        }
+
+        if (/defeat|you lost|you lose|lost the match|match lost|battle lost|you were defeated/i.test(value)) {
+            return "loss";
+        }
+
+        return "";
+    }
+
+    function getBattleTeamSlots(selectors, team) {
+        for (const selector of selectors) {
+            const container = document.querySelector(selector);
+            if (!container) {
+                continue;
+            }
+
+            const slots = Array.from(container.querySelectorAll(".pSlot"));
+            if (slots.length) {
+                return slots;
+            }
+        }
+
+        return Array.from(document.querySelectorAll(".pSlot"))
+            .filter((slot) => getSlotTeam(slot) === team);
+    }
+
+    function summarizeTeamSlots(slots) {
+        const normalizedSlots = Array.isArray(slots)
+            ? slots.filter((slot) => slot instanceof HTMLElement)
+            : [];
+
+        let alive = 0;
+        let dead = 0;
+        for (const slot of normalizedSlots) {
+            if (isSlotEffectivelyAlive(slot)) {
+                alive += 1;
+            } else {
+                dead += 1;
+            }
+        }
+
+        return {
+            total: normalizedSlots.length,
+            alive,
+            dead,
+            defeated: normalizedSlots.length > 0 && alive === 0 && dead > 0
+        };
+    }
+
+    function isSlotEffectivelyAlive(slot) {
+        if (!(slot instanceof HTMLElement)) {
             return false;
         }
 
-        const resultBannerVisible = hasResultBanner();
-        const skillButtons = getSkillButtons();
-        const enemySlots = getVisibleTeamSlots(ENEMY_CONTAINER_SELECTORS);
-        const allySlots = getVisibleTeamSlots(ALLY_CONTAINER_SELECTORS);
-        const enemyDefeated = areAllTeamSlotsMarkedDead(enemySlots);
-        const allyDefeated = areAllTeamSlotsMarkedDead(allySlots);
-        const pageSettled = battlePageEnteredAt > 0 && Date.now() - battlePageEnteredAt >= 2500;
+        if (slot.dataset.alive === "1") {
+            return true;
+        }
 
-        if (!resultBannerVisible && !pageSettled) {
+        if (slot.dataset.alive === "0") {
             return false;
         }
 
-        if (!resultBannerVisible && skillButtons.length) {
+        const hpPercent = getHpPercent(slot);
+        if (Number.isFinite(hpPercent)) {
+            return hpPercent > 0;
+        }
+
+        const text = String(slot.textContent || "").toLowerCase();
+        if (/(dead|defeated|ko|k.o.|fainted|down)/.test(text)) {
             return false;
         }
 
-        if (!resultBannerVisible && !enemyDefeated && !allyDefeated) {
-            return false;
-        }
-
-        battleNoTargetLoops = 0;
-        recordPreviewEvent("Battle finished", "", {
-            allyClass: getSelectedPlayerClassKey() || previewState.allyClass || "adventurer",
-            enemyClass: previewState.enemyClass || "shadow",
-            phase: "idle"
-        });
-        clickElement(backButton, "Battle finished, returning");
         return true;
     }
 
@@ -3065,25 +3423,7 @@
     }
 
     function hasResultBanner() {
-        const selectors = [
-            ".result",
-            ".battle-result",
-            ".match-result",
-            ".toast",
-            ".notice",
-            ".modal.show",
-            ".popup"
-        ];
-
-        const text = [];
-        for (const selector of selectors) {
-            const elements = document.querySelectorAll(selector);
-            for (const element of elements) {
-                text.push(element.textContent || "");
-            }
-        }
-
-        return /victory|defeat|winner|you win|you lost|battle over|match over/i.test(text.join(" "));
+        return /victory|defeat|winner|you win|you lost|battle over|match over/i.test(getBattleResultText());
     }
 
     function findVisibleElement(selectors) {

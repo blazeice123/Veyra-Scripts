@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         GravyPvP
 // @namespace    https://github.com/blazeice123/Veyra-Scripts
-// @version      3.14
+// @version      3.15
 // @description  Auto joins PvP matches, decorates classes with avatars, and adds animated attack effects.
 // @author       GravySEALttv
 // @match        https://demonicscans.org/pvp_battle.php*
@@ -30,7 +30,7 @@
     const LAUNCH_FLAGS = parseLaunchFlags();
     const WORKER_MODE = LAUNCH_FLAGS.worker === "1";
     const WORKER_SESSION_ID = String(LAUNCH_FLAGS.session || "").trim();
-    const SCRIPT_VERSION = "3.14";
+    const SCRIPT_VERSION = "3.15";
     const CONFIG = {
         tickMs: 1200,
         actionCooldownMs: 1000,
@@ -298,6 +298,16 @@
     function getBattleStats() {
         battleStats = loadBattleStats();
         return battleStats;
+    }
+
+    function resetBattleStats() {
+        battleStats = normalizeBattleStats({
+            wins: 0,
+            losses: 0,
+            updatedAt: Date.now(),
+            lastOutcome: ""
+        });
+        saveBattleStats();
     }
 
     function recordBattleOutcome(outcome) {
@@ -2677,6 +2687,8 @@
         const sessionId = buildWorkerSessionId();
         settings.enabled = true;
         saveSettings();
+        resetBattleStats();
+        battleOutcomeHandled = false;
         workerSession = sessionId;
         localStorage.setItem(WORKER_SESSION_KEY, sessionId);
         clearWorkerCommand(sessionId);

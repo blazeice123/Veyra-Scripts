@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         GravyPvP
 // @namespace    https://github.com/blazeice123/Veyra-Scripts
-// @version      3.17
+// @version      3.18
 // @description  Auto joins PvP matches, decorates classes with avatars, and adds animated attack effects.
 // @author       GravySEALttv
 // @match        https://demonicscans.org/pvp_battle.php*
@@ -31,7 +31,8 @@
     const LAUNCH_FLAGS = parseLaunchFlags();
     const WORKER_MODE = LAUNCH_FLAGS.worker === "1";
     const WORKER_SESSION_ID = String(LAUNCH_FLAGS.session || "").trim();
-    const SCRIPT_VERSION = "3.17";
+    const SCRIPT_VERSION = "3.18";
+    const AVATAR_RENDER_VERSION = "css-sprite-v2";
     const CONFIG = {
         tickMs: 1200,
         actionCooldownMs: 1000,
@@ -1337,6 +1338,10 @@
             .apvp-avatar {
                 position: absolute;
                 inset: 0;
+                display: block;
+                pointer-events: none;
+                transform-origin: center bottom;
+                z-index: 2;
                 filter: drop-shadow(0 5px 8px rgba(0, 0, 0, 0.38));
                 --apvp-primary: #83b8ff;
                 --apvp-secondary: #e7f1ff;
@@ -1356,7 +1361,8 @@
                 color: transparent;
             }
 
-            .apvp-avatar .apvp-aura {
+            .apvp-avatar .apvp-aura,
+            .apvp-avatar .apvp-char-aura {
                 position: absolute;
                 left: 7px;
                 bottom: 8px;
@@ -1367,7 +1373,8 @@
                 animation: apvp-pulse 1.8s ease-in-out infinite;
             }
 
-            .apvp-avatar .apvp-head {
+            .apvp-avatar .apvp-head,
+            .apvp-avatar .apvp-char-head {
                 position: absolute;
                 left: 13px;
                 top: 7px;
@@ -1378,7 +1385,8 @@
                 border: 2px solid rgba(11, 14, 17, 0.6);
             }
 
-            .apvp-avatar .apvp-body {
+            .apvp-avatar .apvp-body,
+            .apvp-avatar .apvp-char-body {
                 position: absolute;
                 left: 11px;
                 top: 23px;
@@ -1389,14 +1397,17 @@
                 border: 2px solid rgba(11, 14, 17, 0.6);
             }
 
-            #${PANEL_ID} .apvp-avatar .apvp-body {
+            #${PANEL_ID} .apvp-avatar .apvp-body,
+            #${PANEL_ID} .apvp-avatar .apvp-char-body {
                 display: block;
                 gap: 0;
                 padding: 0;
             }
 
             .apvp-avatar .apvp-body::before,
-            .apvp-avatar .apvp-body::after {
+            .apvp-avatar .apvp-body::after,
+            .apvp-avatar .apvp-char-body::before,
+            .apvp-avatar .apvp-char-body::after {
                 content: "";
                 position: absolute;
                 bottom: -8px;
@@ -1406,21 +1417,27 @@
                 background: var(--apvp-dark);
             }
 
-            .apvp-avatar .apvp-body::before {
+            .apvp-avatar .apvp-body::before,
+            .apvp-avatar .apvp-char-body::before {
                 left: 4px;
             }
 
-            .apvp-avatar .apvp-body::after {
+            .apvp-avatar .apvp-body::after,
+            .apvp-avatar .apvp-char-body::after {
                 right: 4px;
             }
 
             .apvp-avatar .apvp-weapon,
+            .apvp-avatar .apvp-char-weapon,
             .apvp-avatar .apvp-accent,
-            .apvp-avatar .apvp-hat {
+            .apvp-avatar .apvp-char-accent,
+            .apvp-avatar .apvp-hat,
+            .apvp-avatar .apvp-char-hat {
                 position: absolute;
             }
 
-            .apvp-avatar .apvp-weapon {
+            .apvp-avatar .apvp-weapon,
+            .apvp-avatar .apvp-char-weapon {
                 right: 3px;
                 top: 23px;
                 width: 18px;
@@ -1431,7 +1448,8 @@
                 transform: rotate(-25deg);
             }
 
-            .apvp-avatar .apvp-accent {
+            .apvp-avatar .apvp-accent,
+            .apvp-avatar .apvp-char-accent {
                 left: 4px;
                 top: 23px;
                 width: 10px;
@@ -1441,7 +1459,8 @@
                 opacity: 0.8;
             }
 
-            .apvp-avatar .apvp-hat {
+            .apvp-avatar .apvp-hat,
+            .apvp-avatar .apvp-char-hat {
                 left: 10px;
                 top: 0;
                 width: 24px;
@@ -1476,13 +1495,15 @@
                 --apvp-dark: #4b1f18;
             }
 
-            .apvp-slot-visual[data-class="warrior"] .apvp-weapon {
+            .apvp-slot-visual[data-class="warrior"] .apvp-weapon,
+            .apvp-slot-visual[data-class="warrior"] .apvp-char-weapon {
                 width: 21px;
                 height: 5px;
                 transform: rotate(-36deg);
             }
 
-            .apvp-slot-visual[data-class="warrior"] .apvp-accent {
+            .apvp-slot-visual[data-class="warrior"] .apvp-accent,
+            .apvp-slot-visual[data-class="warrior"] .apvp-char-accent {
                 left: 0;
                 top: 28px;
                 width: 14px;
@@ -1499,13 +1520,15 @@
                 --apvp-dark: #1f1d40;
             }
 
-            .apvp-slot-visual[data-class="mage"] .apvp-hat {
+            .apvp-slot-visual[data-class="mage"] .apvp-hat,
+            .apvp-slot-visual[data-class="mage"] .apvp-char-hat {
                 opacity: 1;
                 clip-path: polygon(50% 0, 100% 100%, 0 100%);
                 background: linear-gradient(180deg, #d9f0ff, #4f79ff);
             }
 
-            .apvp-slot-visual[data-class="mage"] .apvp-weapon {
+            .apvp-slot-visual[data-class="mage"] .apvp-weapon,
+            .apvp-slot-visual[data-class="mage"] .apvp-char-weapon {
                 width: 4px;
                 height: 22px;
                 right: 9px;
@@ -1513,7 +1536,8 @@
                 transform: rotate(10deg);
             }
 
-            .apvp-slot-visual[data-class="mage"] .apvp-accent {
+            .apvp-slot-visual[data-class="mage"] .apvp-accent,
+            .apvp-slot-visual[data-class="mage"] .apvp-char-accent {
                 left: 1px;
                 top: 17px;
                 width: 13px;
@@ -1528,7 +1552,8 @@
                 --apvp-dark: #1e3526;
             }
 
-            .apvp-slot-visual[data-class="ranger"] .apvp-weapon {
+            .apvp-slot-visual[data-class="ranger"] .apvp-weapon,
+            .apvp-slot-visual[data-class="ranger"] .apvp-char-weapon {
                 width: 16px;
                 height: 18px;
                 right: 3px;
@@ -1541,7 +1566,8 @@
                 border-radius: 0 12px 12px 0;
             }
 
-            .apvp-slot-visual[data-class="ranger"] .apvp-accent {
+            .apvp-slot-visual[data-class="ranger"] .apvp-accent,
+            .apvp-slot-visual[data-class="ranger"] .apvp-char-accent {
                 left: 5px;
                 top: 25px;
                 width: 14px;
@@ -1558,7 +1584,8 @@
                 --apvp-dark: #101823;
             }
 
-            .apvp-slot-visual[data-class="rogue"] .apvp-hat {
+            .apvp-slot-visual[data-class="rogue"] .apvp-hat,
+            .apvp-slot-visual[data-class="rogue"] .apvp-char-hat {
                 opacity: 1;
                 left: 8px;
                 width: 27px;
@@ -1567,7 +1594,8 @@
                 background: linear-gradient(180deg, #9ad6ff, #1b2f43);
             }
 
-            .apvp-slot-visual[data-class="rogue"] .apvp-weapon {
+            .apvp-slot-visual[data-class="rogue"] .apvp-weapon,
+            .apvp-slot-visual[data-class="rogue"] .apvp-char-weapon {
                 width: 16px;
                 height: 3px;
                 top: 18px;
@@ -1581,7 +1609,8 @@
                 --apvp-dark: #20403a;
             }
 
-            .apvp-slot-visual[data-class="healer"] .apvp-hat {
+            .apvp-slot-visual[data-class="healer"] .apvp-hat,
+            .apvp-slot-visual[data-class="healer"] .apvp-char-hat {
                 opacity: 1;
                 left: 14px;
                 top: 2px;
@@ -1591,7 +1620,8 @@
                 background: linear-gradient(90deg, transparent, #fffce6 20% 80%, transparent);
             }
 
-            .apvp-slot-visual[data-class="healer"] .apvp-accent {
+            .apvp-slot-visual[data-class="healer"] .apvp-accent,
+            .apvp-slot-visual[data-class="healer"] .apvp-char-accent {
                 left: 4px;
                 top: 21px;
                 width: 11px;
@@ -1601,7 +1631,9 @@
             }
 
             .apvp-slot-visual[data-class="healer"] .apvp-accent::before,
-            .apvp-slot-visual[data-class="healer"] .apvp-accent::after {
+            .apvp-slot-visual[data-class="healer"] .apvp-accent::after,
+            .apvp-slot-visual[data-class="healer"] .apvp-char-accent::before,
+            .apvp-slot-visual[data-class="healer"] .apvp-char-accent::after {
                 content: "";
                 position: absolute;
                 left: 4px;
@@ -1613,7 +1645,8 @@
                 box-shadow: 0 0 10px rgba(127, 255, 212, 0.65);
             }
 
-            .apvp-slot-visual[data-class="healer"] .apvp-accent::after {
+            .apvp-slot-visual[data-class="healer"] .apvp-accent::after,
+            .apvp-slot-visual[data-class="healer"] .apvp-char-accent::after {
                 transform: rotate(90deg);
             }
 
@@ -1624,7 +1657,8 @@
                 --apvp-dark: #4f3920;
             }
 
-            .apvp-slot-visual[data-class="paladin"] .apvp-accent {
+            .apvp-slot-visual[data-class="paladin"] .apvp-accent,
+            .apvp-slot-visual[data-class="paladin"] .apvp-char-accent {
                 left: 0;
                 top: 27px;
                 width: 14px;
@@ -1633,7 +1667,8 @@
                 background: linear-gradient(180deg, #fff6cf, #e4a829);
             }
 
-            .apvp-slot-visual[data-class="paladin"] .apvp-weapon {
+            .apvp-slot-visual[data-class="paladin"] .apvp-weapon,
+            .apvp-slot-visual[data-class="paladin"] .apvp-char-weapon {
                 width: 6px;
                 height: 22px;
                 right: 7px;
@@ -1648,7 +1683,8 @@
                 --apvp-dark: #1c1030;
             }
 
-            .apvp-slot-visual[data-class="necromancer"] .apvp-hat {
+            .apvp-slot-visual[data-class="necromancer"] .apvp-hat,
+            .apvp-slot-visual[data-class="necromancer"] .apvp-char-hat {
                 opacity: 1;
                 left: 9px;
                 width: 25px;
@@ -1657,7 +1693,8 @@
                 background: linear-gradient(180deg, #d9d1ff, #34135b);
             }
 
-            .apvp-slot-visual[data-class="necromancer"] .apvp-accent {
+            .apvp-slot-visual[data-class="necromancer"] .apvp-accent,
+            .apvp-slot-visual[data-class="necromancer"] .apvp-char-accent {
                 left: 3px;
                 top: 18px;
                 width: 13px;
@@ -1672,7 +1709,8 @@
                 --apvp-dark: #50331b;
             }
 
-            .apvp-slot-visual[data-class="monk"] .apvp-weapon {
+            .apvp-slot-visual[data-class="monk"] .apvp-weapon,
+            .apvp-slot-visual[data-class="monk"] .apvp-char-weapon {
                 width: 12px;
                 height: 12px;
                 right: 2px;
@@ -1689,7 +1727,8 @@
                 --apvp-dark: #4a1822;
             }
 
-            .apvp-slot-visual[data-class="berserker"] .apvp-weapon {
+            .apvp-slot-visual[data-class="berserker"] .apvp-weapon,
+            .apvp-slot-visual[data-class="berserker"] .apvp-char-weapon {
                 width: 20px;
                 height: 6px;
                 top: 18px;
@@ -1704,7 +1743,8 @@
                 --apvp-skin: #c8bfd8;
             }
 
-            .apvp-slot-visual[data-class="shadow"] .apvp-hat {
+            .apvp-slot-visual[data-class="shadow"] .apvp-hat,
+            .apvp-slot-visual[data-class="shadow"] .apvp-char-hat {
                 opacity: 1;
                 left: 8px;
                 width: 28px;
@@ -2186,13 +2226,13 @@
         return `
             <div class="apvp-preview-stage">
                 <div class="apvp-preview-side ally">
-                    <div class="apvp-slot-visual" data-class="${escapeHtml(preview.allyClass)}" data-team="ally">${buildAvatarMarkup(allyProfile.label, preview.allyClass)}</div>
+                    <div class="apvp-slot-visual" data-class="${escapeHtml(preview.allyClass)}" data-team="ally" data-avatar-render="${escapeHtml(AVATAR_RENDER_VERSION)}">${buildAvatarMarkup(allyProfile.label, preview.allyClass)}</div>
                 </div>
                 <div class="apvp-preview-center">
                     <div class="apvp-preview-effect" data-effect="${escapeHtml(preview.effectType || "")}" data-event="${escapeHtml(preview.eventId || 0)}"></div>
                 </div>
                 <div class="apvp-preview-side enemy">
-                    <div class="apvp-slot-visual" data-class="${escapeHtml(preview.enemyClass || "shadow")}" data-team="enemy">${buildAvatarMarkup(enemyProfile.label, preview.enemyClass || "shadow")}</div>
+                    <div class="apvp-slot-visual" data-class="${escapeHtml(preview.enemyClass || "shadow")}" data-team="enemy" data-avatar-render="${escapeHtml(AVATAR_RENDER_VERSION)}">${buildAvatarMarkup(enemyProfile.label, preview.enemyClass || "shadow")}</div>
                 </div>
             </div>
             <div class="apvp-preview-label">${escapeHtml(preview.actionText || "Standing by")}</div>
@@ -2207,9 +2247,14 @@
         const rawClass = String(classKey || "").trim().toLowerCase();
         const normalizedClass = rawClass && rawClass !== "auto" ? rawClass : "adventurer";
         const profile = getClassProfile(normalizedClass);
-        if (node.dataset.class !== normalizedClass || node.dataset.team !== team || !node.firstElementChild) {
+        const needsRefresh = node.dataset.class !== normalizedClass
+            || node.dataset.team !== team
+            || node.dataset.avatarRender !== AVATAR_RENDER_VERSION
+            || !node.querySelector(".apvp-avatar");
+        if (needsRefresh) {
             node.dataset.class = normalizedClass;
             node.dataset.team = team;
+            node.dataset.avatarRender = AVATAR_RENDER_VERSION;
             node.innerHTML = buildAvatarMarkup(profile.label, normalizedClass);
         }
     }
@@ -3766,9 +3811,13 @@
             slot.appendChild(visual);
         }
 
-        const needsRefresh = visual.dataset.team !== team || visual.dataset.class !== classKey || !visual.firstElementChild;
+        const needsRefresh = visual.dataset.team !== team
+            || visual.dataset.class !== classKey
+            || visual.dataset.avatarRender !== AVATAR_RENDER_VERSION
+            || !visual.querySelector(".apvp-avatar");
         visual.dataset.team = team;
         visual.dataset.class = classKey;
+        visual.dataset.avatarRender = AVATAR_RENDER_VERSION;
         visual.style.opacity = slot.dataset.alive === "0" ? "0.38" : "1";
         if (needsRefresh) {
             visual.innerHTML = buildAvatarMarkup(profile.label, classKey);
@@ -3777,7 +3826,14 @@
 
     function buildAvatarMarkup(label, classKey = "adventurer") {
         return `
-            <img class="apvp-avatar apvp-avatar-art" alt="" src="${buildAvatarDataUri(classKey)}">
+            <div class="apvp-avatar" data-avatar-class="${escapeHtml(normalizeClassKey(classKey))}" data-avatar-render="${escapeHtml(AVATAR_RENDER_VERSION)}" aria-hidden="true">
+                <div class="apvp-char-aura"></div>
+                <div class="apvp-char-body"></div>
+                <div class="apvp-char-accent"></div>
+                <div class="apvp-char-weapon"></div>
+                <div class="apvp-char-head"></div>
+                <div class="apvp-char-hat"></div>
+            </div>
             <div class="apvp-badge">${escapeHtml(label)}</div>
         `;
     }

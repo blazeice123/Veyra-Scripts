@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         GravyPvP
 // @namespace    https://github.com/blazeice123/Veyra-Scripts
-// @version      3.19
+// @version      3.20
 // @description  Auto joins PvP matches, decorates classes with avatars, and adds animated attack effects.
 // @author       GravySEALttv
 // @match        https://demonicscans.org/pvp_battle.php*
@@ -31,7 +31,7 @@
     const LAUNCH_FLAGS = parseLaunchFlags();
     const WORKER_MODE = LAUNCH_FLAGS.worker === "1";
     const WORKER_SESSION_ID = String(LAUNCH_FLAGS.session || "").trim();
-    const SCRIPT_VERSION = "3.19";
+    const SCRIPT_VERSION = "3.20";
     const AVATAR_RENDER_VERSION = "css-sprite-v2";
     const CONFIG = {
         tickMs: 1200,
@@ -171,7 +171,7 @@
     let scheduledEnemyPreviewTimer = 0;
     let forceStartNow = WORKER_MODE ? readWorkerFlags(WORKER_SESSION_ID).forceStartNow : false;
     let spendTokenPool = WORKER_MODE ? readWorkerFlags(WORKER_SESSION_ID).spendTokenPool : false;
-    let workerUiState = createWorkerUiState();
+    let workerUiState = restoreWorkerUiState();
 
     window.addEventListener("error", (event) => {
         if (!shouldCaptureGlobalError(event?.error, event?.filename, event?.message)) {
@@ -2665,6 +2665,35 @@
         };
     }
 
+    function restoreWorkerUiState() {
+        const fallback = createWorkerUiState();
+        const sessionId = String(workerSession || WORKER_SESSION_ID || localStorage.getItem(WORKER_SESSION_KEY) || "").trim();
+        if (!sessionId) {
+            return fallback;
+        }
+
+        try {
+            const report = readWorkerReport();
+            const uiState = report?.sessionId === sessionId && report?.workerUiState && typeof report.workerUiState === "object"
+                ? report.workerUiState
+                : null;
+            if (!uiState) {
+                return fallback;
+            }
+
+            return {
+                ...fallback,
+                mode: String(uiState.mode || fallback.mode || "running"),
+                tokenCount: Number.isFinite(Number(uiState.tokenCount)) ? Number(uiState.tokenCount) : fallback.tokenCount,
+                readyTokenCount: Number.isFinite(Number(uiState.readyTokenCount)) ? Number(uiState.readyTokenCount) : fallback.readyTokenCount,
+                nextCheckAt: Number.isFinite(Number(uiState.nextCheckAt)) ? Number(uiState.nextCheckAt) : fallback.nextCheckAt,
+                showStartNow: !!uiState.showStartNow
+            };
+        } catch (error) {
+            return fallback;
+        }
+    }
+
     function setWorkerUiState(next = {}) {
         if (!WORKER_MODE) {
             return;
@@ -2696,6 +2725,24 @@
             merged.showStartNow = !!next.showStartNow;
         }
         workerUiState = merged;
+    }
+
+    function getTrustedWorkerTokenCount(rawTokenCount, options = {}) {
+        const parsedRaw = Number(rawTokenCount);
+        const previousCount = Number.isFinite(Number(workerUiState.tokenCount)) ? Number(workerUiState.tokenCount) : null;
+        const allowZero = !!options.allowZero;
+
+        if (Number.isFinite(parsedRaw)) {
+            const normalized = Math.floor(parsedRaw);
+            if (normalized > 0) {
+                return normalized;
+            }
+            if (normalized === 0 && allowZero) {
+                return 0;
+            }
+        }
+
+        return previousCount;
     }
 
     function getWorkerUiStateSnapshot() {
@@ -3305,10 +3352,13 @@
         const tokenGoalLabel = `${readyTokenCount} tokens`;
         const activeTokenThreshold = spendTokenPool ? 1 : readyTokenCount;
         const monitoringMode = spendTokenPool ? (forceStartNow ? "armed" : "spending") : "monitoring";
+        let displayTokenCount = getTrustedWorkerTokenCount(tokens, {
+            allowZero: !spendTokenPool
+        });
 
         setWorkerUiState({
             mode: monitoringMode,
-            tokenCount: tokens,
+            tokenCount: displayTokenCount,
             readyTokenCount,
             showStartNow: !spendTokenPool || forceStartNow
         });
@@ -3331,7 +3381,7 @@
             if (shouldMonitorTokens) {
                 maybeRefreshLobbyMonitor(`Lobby: waiting for join button, ${tokenLabel}`, {
                     mode: monitoringMode,
-                    tokenCount: tokens,
+                    tokenCount: displayTokenCount,
                     readyTokenCount,
                     showStartNow: !spendTokenPool || forceStartNow
                 });
@@ -3346,6 +3396,15 @@
                 spendTokenPool = false;
                 forceStartNow = false;
                 persistWorkerFlags(WORKER_SESSION_ID, { forceStartNow, spendTokenPool });
+                displayTokenCount = getTrustedWorkerTokenCount(tokens, {
+                    allowZero: true
+                });
+                setWorkerUiState({
+                    mode: "monitoring",
+                    tokenCount: displayTokenCount,
+                    readyTokenCount,
+                    showStartNow: true
+                });
             }
 
             const waitingMode = spendTokenPool ? (forceStartNow ? "armed" : "spending") : "monitoring";
@@ -3367,7 +3426,7 @@
                         intervalMs: forceStartNow ? CONFIG.startNowCheckMs : CONFIG.lobbyMonitorIntervalMs,
                         alignToSlot: !forceStartNow,
                         mode: waitingMode,
-                        tokenCount: tokens,
+                        tokenCount: displayTokenCount,
                         readyTokenCount,
                         showStartNow: !spendTokenPool || forceStartNow
                     }
@@ -3382,7 +3441,7 @@
             if (shouldMonitorTokens) {
                 maybeRefreshLobbyMonitor(`Lobby: join unavailable, ${tokenLabel}`, {
                     mode: monitoringMode,
-                    tokenCount: tokens,
+                    tokenCount: displayTokenCount,
                     readyTokenCount,
                     showStartNow: !spendTokenPool || forceStartNow
                 });
@@ -3395,7 +3454,7 @@
         if (Date.now() - lastJoinAt < CONFIG.joinCooldownMs) {
             setWorkerUiState({
                 mode: "queueing",
-                tokenCount: tokens,
+                tokenCount: displayTokenCount,
                 readyTokenCount,
                 showStartNow: false,
                 nextCheckAt: 0
@@ -3410,7 +3469,7 @@
         persistWorkerFlags(WORKER_SESSION_ID, { forceStartNow, spendTokenPool });
         setWorkerUiState({
             mode: spendTokenPool ? "spending" : "queueing",
-            tokenCount: tokens,
+            tokenCount: displayTokenCount,
             readyTokenCount,
             showStartNow: false,
             nextCheckAt: 0

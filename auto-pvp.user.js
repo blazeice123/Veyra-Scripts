@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         GravyPvP
 // @namespace    https://github.com/blazeice123/Veyra-Scripts
-// @version      3.18
+// @version      3.19
 // @description  Auto joins PvP matches, decorates classes with avatars, and adds animated attack effects.
 // @author       GravySEALttv
 // @match        https://demonicscans.org/pvp_battle.php*
@@ -31,7 +31,7 @@
     const LAUNCH_FLAGS = parseLaunchFlags();
     const WORKER_MODE = LAUNCH_FLAGS.worker === "1";
     const WORKER_SESSION_ID = String(LAUNCH_FLAGS.session || "").trim();
-    const SCRIPT_VERSION = "3.18";
+    const SCRIPT_VERSION = "3.19";
     const AVATAR_RENDER_VERSION = "css-sprite-v2";
     const CONFIG = {
         tickMs: 1200,
@@ -171,6 +171,7 @@
     let scheduledEnemyPreviewTimer = 0;
     let forceStartNow = WORKER_MODE ? readWorkerFlags(WORKER_SESSION_ID).forceStartNow : false;
     let spendTokenPool = WORKER_MODE ? readWorkerFlags(WORKER_SESSION_ID).spendTokenPool : false;
+    let workerUiState = createWorkerUiState();
 
     window.addEventListener("error", (event) => {
         if (!shouldCaptureGlobalError(event?.error, event?.filename, event?.message)) {
@@ -722,6 +723,14 @@
                 border: 1px solid rgba(111, 144, 255, 0.24);
                 border-radius: 8px;
                 font-size: 12px;
+            }
+
+            #${PANEL_ID} .apvp-worker-meta {
+                margin-top: -2px;
+                padding: 0 2px;
+                color: #aebfd4;
+                font-size: 11px;
+                line-height: 1.35;
             }
 
             #${PANEL_ID} .apvp-stats {
@@ -2015,6 +2024,7 @@
                         <button type="button" data-action="stop-worker" title="Stop the hidden PvP worker and leave the visible page alone.">Stop</button>
                     </div>
                     <div class="apvp-worker"></div>
+                    <div class="apvp-worker-meta" hidden></div>
                     <div class="apvp-row apvp-row-single apvp-start-now-row">
                         <button type="button" data-action="start-now" title="Override token banking and start with the current tokens for this run.">Start now</button>
                     </div>
@@ -2103,6 +2113,13 @@
         const workerState = getCurrentWorkerState();
         if (workerNode) {
             workerNode.textContent = workerState.text;
+        }
+
+        const workerMetaNode = panel.querySelector(".apvp-worker-meta");
+        if (workerMetaNode) {
+            const metaText = buildWorkerMetaText(workerState);
+            workerMetaNode.textContent = metaText;
+            workerMetaNode.hidden = !metaText;
         }
 
         const startNowButton = panel.querySelector('button[data-action="start-now"]');
@@ -2554,6 +2571,11 @@
             forceStartNow = true;
             spendTokenPool = true;
             persistWorkerFlags(WORKER_SESSION_ID, { forceStartNow, spendTokenPool });
+            setWorkerUiState({
+                mode: "armed",
+                showStartNow: true,
+                nextCheckAt: 0
+            });
             updateStatus("Lobby: start now override armed");
             return;
         }
@@ -2629,6 +2651,61 @@
 
     function hasBackgroundWorkerSession() {
         return !WORKER_MODE && !!String(workerSession || localStorage.getItem(WORKER_SESSION_KEY) || "").trim();
+    }
+
+    function createWorkerUiState() {
+        return {
+            mode: WORKER_MODE
+                ? (isBattlePage() ? "fighting" : isLobbyPage() ? "monitoring" : "running")
+                : "idle",
+            tokenCount: null,
+            readyTokenCount: Number(CONFIG.readyTokenCount) || 30,
+            nextCheckAt: 0,
+            showStartNow: false
+        };
+    }
+
+    function setWorkerUiState(next = {}) {
+        if (!WORKER_MODE) {
+            return;
+        }
+
+        const merged = { ...workerUiState };
+        if (Object.prototype.hasOwnProperty.call(next, "mode")) {
+            merged.mode = String(next.mode || merged.mode || "running");
+        }
+        if (Object.prototype.hasOwnProperty.call(next, "tokenCount")) {
+            const parsedTokenCount = Number(next.tokenCount);
+            merged.tokenCount = Number.isFinite(parsedTokenCount) && parsedTokenCount >= 0
+                ? Math.floor(parsedTokenCount)
+                : null;
+        }
+        if (Object.prototype.hasOwnProperty.call(next, "readyTokenCount")) {
+            const parsedReadyCount = Number(next.readyTokenCount);
+            merged.readyTokenCount = Number.isFinite(parsedReadyCount) && parsedReadyCount > 0
+                ? Math.floor(parsedReadyCount)
+                : merged.readyTokenCount;
+        }
+        if (Object.prototype.hasOwnProperty.call(next, "nextCheckAt")) {
+            const parsedNextCheck = Number(next.nextCheckAt);
+            merged.nextCheckAt = Number.isFinite(parsedNextCheck) && parsedNextCheck > 0
+                ? parsedNextCheck
+                : 0;
+        }
+        if (Object.prototype.hasOwnProperty.call(next, "showStartNow")) {
+            merged.showStartNow = !!next.showStartNow;
+        }
+        workerUiState = merged;
+    }
+
+    function getWorkerUiStateSnapshot() {
+        return {
+            mode: String(workerUiState.mode || "running"),
+            tokenCount: Number.isFinite(Number(workerUiState.tokenCount)) ? Number(workerUiState.tokenCount) : null,
+            readyTokenCount: Number.isFinite(Number(workerUiState.readyTokenCount)) ? Number(workerUiState.readyTokenCount) : (Number(CONFIG.readyTokenCount) || 30),
+            nextCheckAt: Number.isFinite(Number(workerUiState.nextCheckAt)) ? Number(workerUiState.nextCheckAt) : 0,
+            showStartNow: !!workerUiState.showStartNow
+        };
     }
 
     function readWorkerCommand() {
@@ -2876,7 +2953,8 @@
             updatedAt: Date.now(),
             preview,
             forceStartNow,
-            spendTokenPool
+            spendTokenPool,
+            workerUiState: getWorkerUiStateSnapshot()
         }));
 
         if (phase === "stopped") {
@@ -2904,7 +2982,10 @@
         if (workerFrame?.isConnected || fresh) {
             const detail = matchingReport?.detail || "Background worker active";
             const path = matchingReport?.path ? ` on ${matchingReport.path}` : "";
-            const showStartNow = !!matchingReport
+            const reportUiState = matchingReport?.workerUiState && typeof matchingReport.workerUiState === "object"
+                ? matchingReport.workerUiState
+                : null;
+            const fallbackShowStartNow = !!matchingReport
                 && /\/pvp\.php/i.test(String(matchingReport.path || ""))
                 && /banking tokens|start now armed|start now override armed/i.test(String(matchingReport.detail || ""));
             return {
@@ -2912,7 +2993,11 @@
                 text: `${detail}${path}`,
                 forceStartNow: !!matchingReport?.forceStartNow,
                 spendTokenPool: !!matchingReport?.spendTokenPool,
-                showStartNow
+                showStartNow: typeof reportUiState?.showStartNow === "boolean" ? reportUiState.showStartNow : fallbackShowStartNow,
+                mode: String(reportUiState?.mode || ""),
+                tokenCount: Number.isFinite(Number(reportUiState?.tokenCount)) ? Number(reportUiState.tokenCount) : null,
+                readyTokenCount: Number.isFinite(Number(reportUiState?.readyTokenCount)) ? Number(reportUiState.readyTokenCount) : (Number(CONFIG.readyTokenCount) || 30),
+                nextCheckAt: Number.isFinite(Number(reportUiState?.nextCheckAt)) ? Number(reportUiState.nextCheckAt) : 0
             };
         }
 
@@ -2925,6 +3010,47 @@
 
     function getWorkerSummaryText() {
         return getCurrentWorkerState().text;
+    }
+
+    function buildWorkerMetaText(workerState = {}) {
+        if (!workerState?.active) {
+            return "";
+        }
+
+        const tokenCount = Number.isFinite(Number(workerState.tokenCount)) ? Number(workerState.tokenCount) : null;
+        const readyTokenCount = Number.isFinite(Number(workerState.readyTokenCount)) ? Number(workerState.readyTokenCount) : (Number(CONFIG.readyTokenCount) || 30);
+        const nextCheckAt = Number.isFinite(Number(workerState.nextCheckAt)) ? Number(workerState.nextCheckAt) : 0;
+        const mode = String(workerState.mode || "");
+
+        if (mode === "armed") {
+            return tokenCount === null
+                ? "Start now is armed. The next token will begin the run immediately."
+                : `Start now is armed. Current tokens: ${tokenCount}. The next token will begin the run immediately.`;
+        }
+
+        if (mode === "monitoring") {
+            if (tokenCount !== null && nextCheckAt > 0) {
+                return `Banked ${tokenCount}/${readyTokenCount}. It will auto-start at full to optimize win rate. Next check at ${formatMonitorTime(nextCheckAt)}.`;
+            }
+            if (tokenCount !== null) {
+                return `Banked ${tokenCount}/${readyTokenCount}. It will auto-start at full to optimize win rate.`;
+            }
+            return nextCheckAt > 0
+                ? `Monitoring for tokens in the background. Next check at ${formatMonitorTime(nextCheckAt)}.`
+                : "Monitoring for tokens in the background until the pool is full.";
+        }
+
+        if (mode === "spending" || (workerState.spendTokenPool && mode === "fighting")) {
+            return tokenCount !== null
+                ? `Token pool live: ${tokenCount} remaining. This run will spend the full pool before monitor mode resumes.`
+                : "Token pool live. This run will spend the full pool before monitor mode resumes.";
+        }
+
+        if (mode === "fighting" && tokenCount !== null) {
+            return `Fight in progress. Last known token count: ${tokenCount}.`;
+        }
+
+        return tokenCount !== null ? `Current tokens: ${tokenCount}.` : "";
     }
 
     function isBackgroundWorkerRunning() {
@@ -3051,6 +3177,11 @@
             }
 
             if (shouldStopWorkerSession()) {
+                setWorkerUiState({
+                    mode: "stopped",
+                    showStartNow: false,
+                    nextCheckAt: 0
+                });
                 previewState = buildPreviewState({
                     actionText: "Stopped",
                     phase: "idle",
@@ -3065,6 +3196,11 @@
             consumeImmediateStartCommand();
 
             if (isBattlePage()) {
+                setWorkerUiState({
+                    mode: "fighting",
+                    showStartNow: false,
+                    nextCheckAt: 0
+                });
                 if (!battlePageEnteredAt) {
                     battlePageEnteredAt = Date.now();
                     battleOutcomeHandled = false;
@@ -3076,6 +3212,9 @@
                     rememberSkillButtons(visibleSkillButtons);
                 }
             } else if (isLobbyPage()) {
+                setWorkerUiState({
+                    mode: spendTokenPool ? (forceStartNow ? "armed" : "spending") : "monitoring"
+                });
                 if (!lobbyPageEnteredAt) {
                     lobbyPageEnteredAt = Date.now();
                 }
@@ -3083,6 +3222,11 @@
                 battleNoTargetLoops = 0;
                 battleOutcomeHandled = false;
             } else {
+                setWorkerUiState({
+                    mode: "running",
+                    showStartNow: false,
+                    nextCheckAt: 0
+                });
                 battlePageEnteredAt = 0;
                 lobbyPageEnteredAt = 0;
                 battleNoTargetLoops = 0;
@@ -3160,8 +3304,21 @@
         const readyTokenCount = Number(CONFIG.readyTokenCount) || 30;
         const tokenGoalLabel = `${readyTokenCount} tokens`;
         const activeTokenThreshold = spendTokenPool ? 1 : readyTokenCount;
+        const monitoringMode = spendTokenPool ? (forceStartNow ? "armed" : "spending") : "monitoring";
+
+        setWorkerUiState({
+            mode: monitoringMode,
+            tokenCount: tokens,
+            readyTokenCount,
+            showStartNow: !spendTokenPool || forceStartNow
+        });
 
         if (continueButton) {
+            setWorkerUiState({
+                mode: "continuing",
+                showStartNow: false,
+                nextCheckAt: 0
+            });
             recordPreviewEvent("Continuing solo match", "", {
                 allyClass: getSelectedPlayerClassKey() || "adventurer",
                 phase: "idle"
@@ -3172,7 +3329,12 @@
 
         if (!joinButton) {
             if (shouldMonitorTokens) {
-                maybeRefreshLobbyMonitor(`Lobby: waiting for join button, ${tokenLabel}`);
+                maybeRefreshLobbyMonitor(`Lobby: waiting for join button, ${tokenLabel}`, {
+                    mode: monitoringMode,
+                    tokenCount: tokens,
+                    readyTokenCount,
+                    showStartNow: !spendTokenPool || forceStartNow
+                });
                 return;
             }
             updateStatus(`Lobby: waiting for join button, ${tokenLabel}`);
@@ -3186,6 +3348,7 @@
                 persistWorkerFlags(WORKER_SESSION_ID, { forceStartNow, spendTokenPool });
             }
 
+            const waitingMode = spendTokenPool ? (forceStartNow ? "armed" : "spending") : "monitoring";
             const waitingText = spendTokenPool
                 ? (forceStartNow
                     ? (Number.isFinite(tokens)
@@ -3200,9 +3363,14 @@
             if (shouldMonitorTokens) {
                 maybeRefreshLobbyMonitor(
                     waitingText,
-                    forceStartNow
-                        ? { intervalMs: CONFIG.startNowCheckMs, alignToSlot: false }
-                        : { intervalMs: CONFIG.lobbyMonitorIntervalMs, alignToSlot: true }
+                    {
+                        intervalMs: forceStartNow ? CONFIG.startNowCheckMs : CONFIG.lobbyMonitorIntervalMs,
+                        alignToSlot: !forceStartNow,
+                        mode: waitingMode,
+                        tokenCount: tokens,
+                        readyTokenCount,
+                        showStartNow: !spendTokenPool || forceStartNow
+                    }
                 );
                 return;
             }
@@ -3212,7 +3380,12 @@
 
         if (!isClickable(joinButton)) {
             if (shouldMonitorTokens) {
-                maybeRefreshLobbyMonitor(`Lobby: join unavailable, ${tokenLabel}`);
+                maybeRefreshLobbyMonitor(`Lobby: join unavailable, ${tokenLabel}`, {
+                    mode: monitoringMode,
+                    tokenCount: tokens,
+                    readyTokenCount,
+                    showStartNow: !spendTokenPool || forceStartNow
+                });
                 return;
             }
             updateStatus(`Lobby: join unavailable, ${tokenLabel}`);
@@ -3220,6 +3393,13 @@
         }
 
         if (Date.now() - lastJoinAt < CONFIG.joinCooldownMs) {
+            setWorkerUiState({
+                mode: "queueing",
+                tokenCount: tokens,
+                readyTokenCount,
+                showStartNow: false,
+                nextCheckAt: 0
+            });
             updateStatus(`Lobby: cooldown, ${tokenLabel}`);
             return;
         }
@@ -3228,6 +3408,13 @@
         spendTokenPool = spendTokenPool || forceStartNow || (Number.isFinite(tokens) && tokens >= readyTokenCount);
         forceStartNow = false;
         persistWorkerFlags(WORKER_SESSION_ID, { forceStartNow, spendTokenPool });
+        setWorkerUiState({
+            mode: spendTokenPool ? "spending" : "queueing",
+            tokenCount: tokens,
+            readyTokenCount,
+            showStartNow: false,
+            nextCheckAt: 0
+        });
         recordPreviewEvent("Joined PvP matchmaking", "", {
             allyClass: getSelectedPlayerClassKey() || "adventurer",
             phase: "idle"
@@ -3294,6 +3481,14 @@
             : pageReference + intervalMs;
         const waitingWithSchedule = `${waitingStatus} Next check at ${formatMonitorTime(nextCheckAt)}.`;
 
+        setWorkerUiState({
+            mode: options.mode || (spendTokenPool ? (forceStartNow ? "armed" : "spending") : "monitoring"),
+            tokenCount: Object.prototype.hasOwnProperty.call(options, "tokenCount") ? options.tokenCount : getTokenCount(),
+            readyTokenCount: options.readyTokenCount || Number(CONFIG.readyTokenCount) || 30,
+            nextCheckAt,
+            showStartNow: Object.prototype.hasOwnProperty.call(options, "showStartNow") ? !!options.showStartNow : (!spendTokenPool || forceStartNow)
+        });
+
         touchProgress();
 
         if ((alignToSlot && currentSlot <= pageSlot) || (!alignToSlot && now < nextCheckAt)) {
@@ -3301,6 +3496,9 @@
             return false;
         }
 
+        setWorkerUiState({
+            nextCheckAt: 0
+        });
         updateStatus("Lobby: refreshing hidden token monitor");
         window.location.reload();
         return true;

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         GravyPvP
 // @namespace    https://github.com/blazeice123/Veyra-Scripts
-// @version      3.15
+// @version      3.16
 // @description  Auto joins PvP matches, decorates classes with avatars, and adds animated attack effects.
 // @author       GravySEALttv
 // @match        https://demonicscans.org/pvp_battle.php*
@@ -24,13 +24,14 @@
     const SETTINGS_KEY = "gravy_pvp_settings_v1";
     const STATS_KEY = "gravy_pvp_stats_v1";
     const WORKER_REPORT_KEY = "gravy_pvp_worker_report_v1";
+    const WORKER_FLAGS_KEY = "gravy_pvp_worker_flags_v1";
     const WORKER_SESSION_KEY = "gravy_pvp_worker_session_v1";
     const WORKER_COMMAND_KEY = "gravy_pvp_worker_command_v1";
     const CLASS_KEYS = ["auto", "warrior", "mage", "ranger", "rogue", "healer", "paladin", "necromancer", "monk", "berserker", "shadow"];
     const LAUNCH_FLAGS = parseLaunchFlags();
     const WORKER_MODE = LAUNCH_FLAGS.worker === "1";
     const WORKER_SESSION_ID = String(LAUNCH_FLAGS.session || "").trim();
-    const SCRIPT_VERSION = "3.15";
+    const SCRIPT_VERSION = "3.16";
     const CONFIG = {
         tickMs: 1200,
         actionCooldownMs: 1000,
@@ -166,7 +167,8 @@
     let lastEnemyPreviewAt = 0;
     let lastEnemyPreviewKey = "";
     let scheduledEnemyPreviewTimer = 0;
-    let forceStartNow = false;
+    let forceStartNow = WORKER_MODE ? readWorkerFlags(WORKER_SESSION_ID).forceStartNow : false;
+    let spendTokenPool = WORKER_MODE ? readWorkerFlags(WORKER_SESSION_ID).spendTokenPool : false;
 
     window.addEventListener("error", (event) => {
         if (!shouldCaptureGlobalError(event?.error, event?.filename, event?.message)) {
@@ -2504,6 +2506,8 @@
     function requestImmediateStart() {
         if (WORKER_MODE) {
             forceStartNow = true;
+            spendTokenPool = true;
+            persistWorkerFlags(WORKER_SESSION_ID, { forceStartNow, spendTokenPool });
             updateStatus("Lobby: start now override armed");
             return;
         }
@@ -2590,6 +2594,46 @@
         }
     }
 
+    function readWorkerFlags(sessionId = "") {
+        const normalizedSession = String(sessionId || workerSession || WORKER_SESSION_ID || "").trim();
+        if (!normalizedSession) {
+            return { forceStartNow: false, spendTokenPool: false };
+        }
+
+        try {
+            const raw = localStorage.getItem(WORKER_FLAGS_KEY);
+            const parsed = raw ? JSON.parse(raw) : null;
+            if (!parsed || parsed.sessionId !== normalizedSession) {
+                return { forceStartNow: false, spendTokenPool: false };
+            }
+
+            return {
+                forceStartNow: !!parsed.forceStartNow,
+                spendTokenPool: !!parsed.spendTokenPool
+            };
+        } catch (error) {
+            return { forceStartNow: false, spendTokenPool: false };
+        }
+    }
+
+    function persistWorkerFlags(sessionId = "", overrides = {}) {
+        const normalizedSession = String(sessionId || workerSession || WORKER_SESSION_ID || "").trim();
+        if (!normalizedSession) {
+            return;
+        }
+
+        const next = {
+            ...readWorkerFlags(normalizedSession),
+            ...overrides
+        };
+
+        localStorage.setItem(WORKER_FLAGS_KEY, JSON.stringify({
+            sessionId: normalizedSession,
+            forceStartNow: !!next.forceStartNow,
+            spendTokenPool: !!next.spendTokenPool
+        }));
+    }
+
     function publishWorkerCommand(command, sessionId, detail = "") {
         const normalizedSession = String(sessionId || "").trim();
         if (!normalizedSession) {
@@ -2611,10 +2655,34 @@
         }
     }
 
+    function clearWorkerFlags(sessionId = "") {
+        const normalizedSession = String(sessionId || workerSession || WORKER_SESSION_ID || "").trim();
+        if (!normalizedSession) {
+            return;
+        }
+
+        const flags = readWorkerFlags(normalizedSession);
+        if (flags.forceStartNow || flags.spendTokenPool) {
+            localStorage.removeItem(WORKER_FLAGS_KEY);
+            return;
+        }
+
+        try {
+            const raw = localStorage.getItem(WORKER_FLAGS_KEY);
+            const parsed = raw ? JSON.parse(raw) : null;
+            if (parsed?.sessionId === normalizedSession) {
+                localStorage.removeItem(WORKER_FLAGS_KEY);
+            }
+        } catch (error) {
+            localStorage.removeItem(WORKER_FLAGS_KEY);
+        }
+    }
+
     function clearWorkerSessionState(sessionId = "") {
         const normalizedSession = String(sessionId || workerSession || localStorage.getItem(WORKER_SESSION_KEY) || "").trim();
         if (normalizedSession) {
             clearWorkerCommand(normalizedSession);
+            clearWorkerFlags(normalizedSession);
         }
 
         workerSession = "";
@@ -2626,6 +2694,7 @@
         localStorage.removeItem(WORKER_SESSION_KEY);
         localStorage.removeItem(WORKER_REPORT_KEY);
         localStorage.removeItem(WORKER_COMMAND_KEY);
+        localStorage.removeItem(WORKER_FLAGS_KEY);
     }
 
     function shouldStopWorkerSession() {
@@ -2648,6 +2717,8 @@
         }
 
         forceStartNow = true;
+        spendTokenPool = true;
+        persistWorkerFlags(WORKER_SESSION_ID, { forceStartNow, spendTokenPool });
         clearWorkerCommand(WORKER_SESSION_ID);
         updateStatus("Lobby: start now override armed");
         touchProgress();
@@ -2689,9 +2760,12 @@
         saveSettings();
         resetBattleStats();
         battleOutcomeHandled = false;
+        forceStartNow = false;
+        spendTokenPool = false;
         workerSession = sessionId;
         localStorage.setItem(WORKER_SESSION_KEY, sessionId);
         clearWorkerCommand(sessionId);
+        clearWorkerFlags(sessionId);
         publishWorkerReport("starting", "Launching hidden background worker", sessionId);
 
         const url = new URL("https://demonicscans.org/pvp.php");
@@ -2712,6 +2786,7 @@
 
         settings.enabled = false;
         forceStartNow = false;
+        spendTokenPool = false;
         saveSettings();
         previewState = buildPreviewState({
             actionText: "Background idle",
@@ -2754,7 +2829,8 @@
             path: `${location.pathname}${location.search}`,
             updatedAt: Date.now(),
             preview,
-            forceStartNow
+            forceStartNow,
+            spendTokenPool
         }));
 
         if (phase === "stopped") {
@@ -2766,12 +2842,12 @@
         const report = readWorkerReport();
         const sessionId = String(workerSession || localStorage.getItem(WORKER_SESSION_KEY) || "").trim();
         if (!sessionId) {
-            return { active: false, text: "Background worker idle", forceStartNow: false, showStartNow: false };
+            return { active: false, text: "Background worker idle", forceStartNow: false, spendTokenPool: false, showStartNow: false };
         }
 
         if (!WORKER_MODE && !workerFrame?.isConnected) {
             clearWorkerSessionState(sessionId);
-            return { active: false, text: "Background worker idle", forceStartNow: false, showStartNow: false };
+            return { active: false, text: "Background worker idle", forceStartNow: false, spendTokenPool: false, showStartNow: false };
         }
 
         const matchingReport = report && report.sessionId === sessionId ? report : null;
@@ -2789,6 +2865,7 @@
                 active: true,
                 text: `${detail}${path}`,
                 forceStartNow: !!matchingReport?.forceStartNow,
+                spendTokenPool: !!matchingReport?.spendTokenPool,
                 showStartNow
             };
         }
@@ -2797,7 +2874,7 @@
             clearWorkerSessionState(sessionId);
         }
 
-        return { active: false, text: "Background worker idle", forceStartNow: false, showStartNow: false };
+        return { active: false, text: "Background worker idle", forceStartNow: false, spendTokenPool: false, showStartNow: false };
     }
 
     function getWorkerSummaryText() {
@@ -3029,7 +3106,7 @@
         const shouldMonitorTokens = WORKER_MODE && settings.enabled;
         const readyTokenCount = Number(CONFIG.readyTokenCount) || 30;
         const tokenGoalLabel = `${readyTokenCount} tokens`;
-        const activeTokenThreshold = forceStartNow ? 1 : readyTokenCount;
+        const activeTokenThreshold = spendTokenPool ? 1 : readyTokenCount;
 
         if (continueButton) {
             recordPreviewEvent("Continuing solo match", "", {
@@ -3049,10 +3126,20 @@
         }
 
         if (!Number.isFinite(tokens) || tokens < activeTokenThreshold) {
-            const waitingText = forceStartNow
-                ? (Number.isFinite(tokens)
-                    ? `Lobby: start now armed. Waiting for tokens ${tokens}/1 to begin immediately.`
-                    : "Lobby: start now armed. Waiting for the next token to begin immediately.")
+            if (spendTokenPool && Number.isFinite(tokens) && tokens <= 0) {
+                spendTokenPool = false;
+                forceStartNow = false;
+                persistWorkerFlags(WORKER_SESSION_ID, { forceStartNow, spendTokenPool });
+            }
+
+            const waitingText = spendTokenPool
+                ? (forceStartNow
+                    ? (Number.isFinite(tokens)
+                        ? `Lobby: start now armed. Waiting for tokens ${tokens}/1 to begin immediately.`
+                        : "Lobby: start now armed. Waiting for the next token to begin immediately.")
+                    : (Number.isFinite(tokens)
+                        ? `Lobby: spending token pool, ${tokens} remaining before bank mode resumes.`
+                        : "Lobby: spending token pool as tokens become available."))
                 : (Number.isFinite(tokens)
                     ? `Lobby: banking tokens ${tokens}/${readyTokenCount} in background. Will start at ${readyTokenCount} to optimize win rate.`
                     : `Lobby: banking tokens in background, waiting for ${tokenGoalLabel}. Will start when full to optimize win rate.`);
@@ -3077,7 +3164,9 @@
         }
 
         lastJoinAt = Date.now();
+        spendTokenPool = spendTokenPool || forceStartNow || (Number.isFinite(tokens) && tokens >= readyTokenCount);
         forceStartNow = false;
+        persistWorkerFlags(WORKER_SESSION_ID, { forceStartNow, spendTokenPool });
         recordPreviewEvent("Joined PvP matchmaking", "", {
             allyClass: getSelectedPlayerClassKey() || "adventurer",
             phase: "idle"

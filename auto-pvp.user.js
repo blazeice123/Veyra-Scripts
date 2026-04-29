@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         GravyPvP
 // @namespace    https://github.com/blazeice123/Veyra-Scripts
-// @version      3.16
+// @version      3.17
 // @description  Auto joins PvP matches, decorates classes with avatars, and adds animated attack effects.
 // @author       GravySEALttv
 // @match        https://demonicscans.org/pvp_battle.php*
@@ -31,12 +31,13 @@
     const LAUNCH_FLAGS = parseLaunchFlags();
     const WORKER_MODE = LAUNCH_FLAGS.worker === "1";
     const WORKER_SESSION_ID = String(LAUNCH_FLAGS.session || "").trim();
-    const SCRIPT_VERSION = "3.16";
+    const SCRIPT_VERSION = "3.17";
     const CONFIG = {
         tickMs: 1200,
         actionCooldownMs: 1000,
         joinCooldownMs: 4000,
-        lobbyMonitorReloadMs: 45000,
+        lobbyMonitorIntervalMs: 15 * 60 * 1000,
+        startNowCheckMs: 45000,
         readyTokenCount: 30,
         staleReloadMs: 180000,
         workerHeartbeatMs: 1500,
@@ -2886,6 +2887,13 @@
     }
 
     function updateStatus(text) {
+        if (statusText === text) {
+            if (!WORKER_MODE) {
+                syncPanelState();
+            }
+            return;
+        }
+
         statusText = text;
         if (WORKER_MODE) {
             publishWorkerReport("running", text);
@@ -3118,7 +3126,8 @@
         }
 
         if (!joinButton) {
-            if (shouldMonitorTokens && maybeRefreshLobbyMonitor(`Lobby: waiting for join button, ${tokenLabel}`)) {
+            if (shouldMonitorTokens) {
+                maybeRefreshLobbyMonitor(`Lobby: waiting for join button, ${tokenLabel}`);
                 return;
             }
             updateStatus(`Lobby: waiting for join button, ${tokenLabel}`);
@@ -3143,7 +3152,13 @@
                 : (Number.isFinite(tokens)
                     ? `Lobby: banking tokens ${tokens}/${readyTokenCount} in background. Will start at ${readyTokenCount} to optimize win rate.`
                     : `Lobby: banking tokens in background, waiting for ${tokenGoalLabel}. Will start when full to optimize win rate.`);
-            if (shouldMonitorTokens && maybeRefreshLobbyMonitor(waitingText)) {
+            if (shouldMonitorTokens) {
+                maybeRefreshLobbyMonitor(
+                    waitingText,
+                    forceStartNow
+                        ? { intervalMs: CONFIG.startNowCheckMs, alignToSlot: false }
+                        : { intervalMs: CONFIG.lobbyMonitorIntervalMs, alignToSlot: true }
+                );
                 return;
             }
             updateStatus(waitingText);
@@ -3151,7 +3166,8 @@
         }
 
         if (!isClickable(joinButton)) {
-            if (shouldMonitorTokens && maybeRefreshLobbyMonitor(`Lobby: join unavailable, ${tokenLabel}`)) {
+            if (shouldMonitorTokens) {
+                maybeRefreshLobbyMonitor(`Lobby: join unavailable, ${tokenLabel}`);
                 return;
             }
             updateStatus(`Lobby: join unavailable, ${tokenLabel}`);
@@ -3217,21 +3233,43 @@
         await targetLowestHpEnemy();
     }
 
-    function maybeRefreshLobbyMonitor(waitingStatus) {
+    function maybeRefreshLobbyMonitor(waitingStatus, options = {}) {
         if (!WORKER_MODE || !isLobbyPage()) {
             return false;
         }
 
-        const elapsed = lobbyPageEnteredAt > 0 ? Date.now() - lobbyPageEnteredAt : 0;
-        if (elapsed < CONFIG.lobbyMonitorReloadMs) {
-            updateStatus(waitingStatus);
+        const now = Date.now();
+        const intervalMs = Math.max(60000, Number(options.intervalMs) || Number(CONFIG.lobbyMonitorIntervalMs) || 900000);
+        const alignToSlot = options.alignToSlot !== false;
+        const pageReference = lobbyPageEnteredAt > 0 ? lobbyPageEnteredAt : now;
+        const pageSlot = Math.floor(pageReference / intervalMs);
+        const currentSlot = Math.floor(now / intervalMs);
+        const nextCheckAt = alignToSlot
+            ? (pageSlot + 1) * intervalMs
+            : pageReference + intervalMs;
+        const waitingWithSchedule = `${waitingStatus} Next check at ${formatMonitorTime(nextCheckAt)}.`;
+
+        touchProgress();
+
+        if ((alignToSlot && currentSlot <= pageSlot) || (!alignToSlot && now < nextCheckAt)) {
+            updateStatus(waitingWithSchedule);
             return false;
         }
 
-        touchProgress();
         updateStatus("Lobby: refreshing hidden token monitor");
         window.location.reload();
         return true;
+    }
+
+    function formatMonitorTime(timestamp) {
+        try {
+            return new Intl.DateTimeFormat(undefined, {
+                hour: "numeric",
+                minute: "2-digit"
+            }).format(new Date(timestamp));
+        } catch (error) {
+            return new Date(timestamp).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+        }
     }
 
     async function maybeLeaveFinishedBattle(resolution = getBattleResolutionState()) {

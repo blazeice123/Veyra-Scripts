@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         GravyPvP
 // @namespace    https://github.com/blazeice123/Veyra-Scripts
-// @version      3.21
+// @version      3.22
 // @description  Auto joins PvP matches, decorates classes with avatars, and adds animated attack effects.
 // @author       GravySEALttv
 // @match        https://demonicscans.org/pvp_battle.php*
@@ -25,13 +25,14 @@
     const STATS_KEY = "gravy_pvp_stats_v1";
     const WORKER_REPORT_KEY = "gravy_pvp_worker_report_v1";
     const WORKER_FLAGS_KEY = "gravy_pvp_worker_flags_v1";
+    const WORKER_RECYCLE_KEY = "gravy_pvp_worker_recycle_v1";
     const WORKER_SESSION_KEY = "gravy_pvp_worker_session_v1";
     const WORKER_COMMAND_KEY = "gravy_pvp_worker_command_v1";
     const CLASS_KEYS = ["auto", "warrior", "mage", "ranger", "rogue", "healer", "paladin", "necromancer", "monk", "berserker", "shadow"];
     const LAUNCH_FLAGS = parseLaunchFlags();
     const WORKER_MODE = LAUNCH_FLAGS.worker === "1";
     const WORKER_SESSION_ID = String(LAUNCH_FLAGS.session || "").trim();
-    const SCRIPT_VERSION = "3.21";
+    const SCRIPT_VERSION = "3.22";
     const AVATAR_RENDER_VERSION = "css-sprite-v2";
     const CONFIG = {
         tickMs: 1200,
@@ -2848,11 +2849,64 @@
         }
     }
 
+    function scheduleWorkerRecycle(sessionId = "", reason = "") {
+        const normalizedSession = String(sessionId || workerSession || WORKER_SESSION_ID || "").trim();
+        if (!normalizedSession) {
+            return;
+        }
+
+        localStorage.setItem(WORKER_RECYCLE_KEY, JSON.stringify({
+            sessionId: normalizedSession,
+            reason: String(reason || ""),
+            issuedAt: Date.now()
+        }));
+    }
+
+    function consumeWorkerRecycle(sessionId = "") {
+        const normalizedSession = String(sessionId || workerSession || WORKER_SESSION_ID || "").trim();
+        if (!normalizedSession) {
+            return null;
+        }
+
+        try {
+            const raw = localStorage.getItem(WORKER_RECYCLE_KEY);
+            const parsed = raw ? JSON.parse(raw) : null;
+            if (!parsed || parsed.sessionId !== normalizedSession) {
+                return null;
+            }
+
+            localStorage.removeItem(WORKER_RECYCLE_KEY);
+            return parsed;
+        } catch (error) {
+            localStorage.removeItem(WORKER_RECYCLE_KEY);
+            return null;
+        }
+    }
+
+    function clearWorkerRecycle(sessionId = "") {
+        const normalizedSession = String(sessionId || workerSession || WORKER_SESSION_ID || "").trim();
+        if (!normalizedSession) {
+            localStorage.removeItem(WORKER_RECYCLE_KEY);
+            return;
+        }
+
+        try {
+            const raw = localStorage.getItem(WORKER_RECYCLE_KEY);
+            const parsed = raw ? JSON.parse(raw) : null;
+            if (!parsed || parsed.sessionId === normalizedSession) {
+                localStorage.removeItem(WORKER_RECYCLE_KEY);
+            }
+        } catch (error) {
+            localStorage.removeItem(WORKER_RECYCLE_KEY);
+        }
+    }
+
     function clearWorkerSessionState(sessionId = "") {
         const normalizedSession = String(sessionId || workerSession || localStorage.getItem(WORKER_SESSION_KEY) || "").trim();
         if (normalizedSession) {
             clearWorkerCommand(normalizedSession);
             clearWorkerFlags(normalizedSession);
+            clearWorkerRecycle(normalizedSession);
         }
 
         workerSession = "";
@@ -2865,6 +2919,7 @@
         localStorage.removeItem(WORKER_REPORT_KEY);
         localStorage.removeItem(WORKER_COMMAND_KEY);
         localStorage.removeItem(WORKER_FLAGS_KEY);
+        localStorage.removeItem(WORKER_RECYCLE_KEY);
     }
 
     function shouldStopWorkerSession() {
@@ -2936,6 +2991,7 @@
         localStorage.setItem(WORKER_SESSION_KEY, sessionId);
         clearWorkerCommand(sessionId);
         clearWorkerFlags(sessionId);
+        clearWorkerRecycle(sessionId);
         publishWorkerReport("starting", "Launching hidden background worker", sessionId);
 
         const url = new URL("https://demonicscans.org/pvp.php");
@@ -3085,6 +3141,10 @@
             return nextCheckAt > 0
                 ? `Monitoring for tokens in the background. Next check at ${formatMonitorTime(nextCheckAt)}.`
                 : "Monitoring for tokens in the background until the pool is full.";
+        }
+
+        if (mode === "recycling") {
+            return "Refreshing the hidden worker after the last battle so monitoring resumes from a clean page.";
         }
 
         if (mode === "spending" || (workerState.spendTokenPool && mode === "fighting")) {
@@ -3330,6 +3390,18 @@
 
     async function handleLobbyPage() {
         clearError();
+
+        const recycleRequest = consumeWorkerRecycle(WORKER_SESSION_ID);
+        if (recycleRequest && (Date.now() - Number(recycleRequest.issuedAt || 0)) <= 5 * 60 * 1000) {
+            setWorkerUiState({
+                mode: "recycling",
+                showStartNow: false,
+                nextCheckAt: 0
+            });
+            updateStatus("Lobby: recycling hidden worker after the last battle");
+            window.location.reload();
+            return;
+        }
 
         const continueButton = findClickableElementByText([
             "continue solo match",
@@ -3597,6 +3669,7 @@
             enemyClass: previewState.enemyClass || "shadow",
             phase: "idle"
         });
+        scheduleWorkerRecycle(WORKER_SESSION_ID, `battle-finished:${resolution.outcome || "finished"}`);
         clickElement(backButton, `${outcomeLabel}, returning`);
         return true;
     }
@@ -3798,6 +3871,7 @@
                 recordPreviewEvent("No targets left", "", {
                     phase: "idle"
                 });
+                scheduleWorkerRecycle(WORKER_SESSION_ID, "no-targets-left");
                 clickElement(backButton, "No targets left, returning");
                 return;
             }

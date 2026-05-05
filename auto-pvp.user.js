@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         GravyPvP
 // @namespace    https://github.com/blazeice123/Veyra-Scripts
-// @version      3.22
+// @version      3.23
 // @description  Auto joins PvP matches, decorates classes with avatars, and adds animated attack effects.
 // @author       GravySEALttv
 // @match        https://demonicscans.org/pvp_battle.php*
@@ -32,7 +32,7 @@
     const LAUNCH_FLAGS = parseLaunchFlags();
     const WORKER_MODE = LAUNCH_FLAGS.worker === "1";
     const WORKER_SESSION_ID = String(LAUNCH_FLAGS.session || "").trim();
-    const SCRIPT_VERSION = "3.22";
+    const SCRIPT_VERSION = "3.23";
     const AVATAR_RENDER_VERSION = "css-sprite-v2";
     const CONFIG = {
         tickMs: 1200,
@@ -172,7 +172,9 @@
     let scheduledEnemyPreviewTimer = 0;
     let forceStartNow = WORKER_MODE ? readWorkerFlags(WORKER_SESSION_ID).forceStartNow : false;
     let spendTokenPool = WORKER_MODE ? readWorkerFlags(WORKER_SESSION_ID).spendTokenPool : false;
+    let stopAfterBattle = WORKER_MODE ? readWorkerFlags(WORKER_SESSION_ID).stopAfterBattle : false;
     let workerUiState = restoreWorkerUiState();
+    let stopMenuOpen = false;
 
     window.addEventListener("error", (event) => {
         if (!shouldCaptureGlobalError(event?.error, event?.filename, event?.message)) {
@@ -441,6 +443,10 @@
                 display: none !important;
             }
 
+            #${PANEL_ID} .apvp-stop-choice-row[hidden] {
+                display: none !important;
+            }
+
             #${PANEL_ID} label {
                 display: flex;
                 align-items: center;
@@ -512,6 +518,23 @@
             }
 
             #${PANEL_ID} button[data-action="start-now"][data-armed="1"] {
+                background: linear-gradient(135deg, #8c5a18, #d3922b);
+                border-color: #f0be6d;
+                box-shadow: 0 0 0 0 rgba(240, 190, 109, 0.26);
+                animation: apvp-monitor-pulse 1.4s ease-in-out infinite;
+            }
+
+            #${PANEL_ID} button[data-action="stop-worker-now"] {
+                background: linear-gradient(135deg, #7d2d2d, #b64a4a);
+                border-color: #d87575;
+            }
+
+            #${PANEL_ID} button[data-action="stop-worker-after-battle"] {
+                background: linear-gradient(135deg, #6f4b18, #b67729);
+                border-color: #d7a04c;
+            }
+
+            #${PANEL_ID} button[data-action="stop-worker-after-battle"][data-pending="1"] {
                 background: linear-gradient(135deg, #8c5a18, #d3922b);
                 border-color: #f0be6d;
                 box-shadow: 0 0 0 0 rgba(240, 190, 109, 0.26);
@@ -2024,6 +2047,10 @@
                         <button type="button" data-action="start-worker" title="Start the hidden PvP worker so the visible page stays idle.">Start</button>
                         <button type="button" data-action="stop-worker" title="Stop the hidden PvP worker and leave the visible page alone.">Stop</button>
                     </div>
+                    <div class="apvp-row apvp-stop-choice-row" hidden>
+                        <button type="button" data-action="stop-worker-now" title="Stop the hidden PvP worker immediately.">Stop now</button>
+                        <button type="button" data-action="stop-worker-after-battle" title="Finish the current battle, then stop before starting another one.">Stop after battle</button>
+                    </div>
                     <div class="apvp-worker"></div>
                     <div class="apvp-worker-meta" hidden></div>
                     <div class="apvp-row apvp-row-single apvp-start-now-row">
@@ -2130,6 +2157,16 @@
             startNowRow.hidden = !workerState.showStartNow;
         }
 
+        if (!workerState.active) {
+            stopMenuOpen = false;
+        }
+
+        const stopChoiceRow = panel.querySelector(".apvp-stop-choice-row");
+        if (stopChoiceRow instanceof HTMLElement) {
+            stopChoiceRow.classList.add("apvp-stop-choice-row");
+            stopChoiceRow.hidden = !(workerState.active && stopMenuOpen);
+        }
+
         if (settings.battleVisuals) {
             syncPreviewPanel(panel);
         }
@@ -2158,6 +2195,26 @@
         const stopWorkerButton = panel.querySelector('button[data-action="stop-worker"]');
         if (stopWorkerButton instanceof HTMLButtonElement) {
             stopWorkerButton.disabled = !workerState.active;
+            stopWorkerButton.title = workerState.active
+                ? "Choose whether to stop immediately or after the current battle."
+                : "Start the hidden worker first.";
+        }
+
+        const stopNowButton = panel.querySelector('button[data-action="stop-worker-now"]');
+        if (stopNowButton instanceof HTMLButtonElement) {
+            stopNowButton.disabled = !workerState.active;
+        }
+
+        const stopAfterBattleButton = panel.querySelector('button[data-action="stop-worker-after-battle"]');
+        if (stopAfterBattleButton instanceof HTMLButtonElement) {
+            stopAfterBattleButton.disabled = !workerState.active || !!workerState.stopAfterBattle;
+            stopAfterBattleButton.dataset.pending = workerState.stopAfterBattle ? "1" : "0";
+            stopAfterBattleButton.textContent = workerState.stopAfterBattle ? "Stop after battle armed" : "Stop after battle";
+            stopAfterBattleButton.title = !workerState.active
+                ? "Start the hidden worker first."
+                : workerState.stopAfterBattle
+                    ? "The worker will finish the current battle and stop before starting another one."
+                    : "Finish the current battle, then stop before starting another one.";
         }
 
         const errorNode = panel.querySelector(".apvp-error");
@@ -2470,6 +2527,7 @@
         }
 
         if (action === "toggle-panel") {
+            stopMenuOpen = false;
             settings.expanded = !settings.expanded;
             saveSettings();
             syncPanelState();
@@ -2477,32 +2535,54 @@
         }
 
         if (action === "start-worker") {
+            stopMenuOpen = false;
             startBackgroundWorker();
             return;
         }
 
         if (action === "start-now") {
+            stopMenuOpen = false;
             requestImmediateStart();
             return;
         }
 
         if (action === "stop-worker") {
+            if (!getCurrentWorkerState().active) {
+                syncPanelState();
+                return;
+            }
+            stopMenuOpen = !stopMenuOpen;
+            syncPanelState();
+            return;
+        }
+
+        if (action === "stop-worker-now") {
+            stopMenuOpen = false;
             stopBackgroundWorker("Stopped hidden background worker");
             return;
         }
 
+        if (action === "stop-worker-after-battle") {
+            stopMenuOpen = false;
+            requestStopAfterBattle();
+            return;
+        }
+
         if (action === "skill-up" || action === "skill-down") {
+            stopMenuOpen = false;
             const index = Number.parseInt(target.dataset.index || "", 10);
             moveSkillPriority(index, action === "skill-up" ? -1 : 1);
             return;
         }
 
         if (action === "toggle-skill-enabled") {
+            stopMenuOpen = false;
             toggleSkillEnabled(target.dataset.skill || "");
             return;
         }
 
         if (action === "reset-skills") {
+            stopMenuOpen = false;
             resetSkillPriority();
         }
     }
@@ -2571,7 +2651,7 @@
         if (WORKER_MODE) {
             forceStartNow = true;
             spendTokenPool = true;
-            persistWorkerFlags(WORKER_SESSION_ID, { forceStartNow, spendTokenPool });
+            persistWorkerFlags(WORKER_SESSION_ID, { forceStartNow, spendTokenPool, stopAfterBattle });
             setWorkerUiState({
                 mode: "armed",
                 showStartNow: true,
@@ -2590,6 +2670,26 @@
 
         publishWorkerCommand("start_now", sessionId, "Immediate start override requested");
         updateStatus("Start now override requested");
+    }
+
+    function requestStopAfterBattle() {
+        if (WORKER_MODE) {
+            stopAfterBattle = true;
+            persistWorkerFlags(WORKER_SESSION_ID, { forceStartNow, spendTokenPool, stopAfterBattle });
+            updateStatus("Stop after battle armed");
+            touchProgress();
+            return;
+        }
+
+        const workerState = getCurrentWorkerState();
+        const sessionId = String(workerSession || localStorage.getItem(WORKER_SESSION_KEY) || "").trim();
+        if (!workerState.active || !sessionId) {
+            syncPanelState();
+            return;
+        }
+
+        publishWorkerCommand("stop_after_battle", sessionId, "Finish the current battle, then stop");
+        updateStatus("Stop after battle requested");
     }
 
     function resetSkillPriority() {
@@ -2768,22 +2868,23 @@
     function readWorkerFlags(sessionId = "") {
         const normalizedSession = String(sessionId || workerSession || WORKER_SESSION_ID || "").trim();
         if (!normalizedSession) {
-            return { forceStartNow: false, spendTokenPool: false };
+            return { forceStartNow: false, spendTokenPool: false, stopAfterBattle: false };
         }
 
         try {
             const raw = localStorage.getItem(WORKER_FLAGS_KEY);
             const parsed = raw ? JSON.parse(raw) : null;
             if (!parsed || parsed.sessionId !== normalizedSession) {
-                return { forceStartNow: false, spendTokenPool: false };
+                return { forceStartNow: false, spendTokenPool: false, stopAfterBattle: false };
             }
 
             return {
                 forceStartNow: !!parsed.forceStartNow,
-                spendTokenPool: !!parsed.spendTokenPool
+                spendTokenPool: !!parsed.spendTokenPool,
+                stopAfterBattle: !!parsed.stopAfterBattle
             };
         } catch (error) {
-            return { forceStartNow: false, spendTokenPool: false };
+            return { forceStartNow: false, spendTokenPool: false, stopAfterBattle: false };
         }
     }
 
@@ -2801,7 +2902,8 @@
         localStorage.setItem(WORKER_FLAGS_KEY, JSON.stringify({
             sessionId: normalizedSession,
             forceStartNow: !!next.forceStartNow,
-            spendTokenPool: !!next.spendTokenPool
+            spendTokenPool: !!next.spendTokenPool,
+            stopAfterBattle: !!next.stopAfterBattle
         }));
     }
 
@@ -2833,7 +2935,7 @@
         }
 
         const flags = readWorkerFlags(normalizedSession);
-        if (flags.forceStartNow || flags.spendTokenPool) {
+        if (flags.forceStartNow || flags.spendTokenPool || flags.stopAfterBattle) {
             localStorage.removeItem(WORKER_FLAGS_KEY);
             return;
         }
@@ -2931,6 +3033,24 @@
         return command?.sessionId === WORKER_SESSION_ID && command.command === "stop";
     }
 
+    function consumeStopAfterBattleCommand() {
+        if (!WORKER_MODE) {
+            return false;
+        }
+
+        const command = readWorkerCommand();
+        if (command?.sessionId !== WORKER_SESSION_ID || command.command !== "stop_after_battle") {
+            return false;
+        }
+
+        stopAfterBattle = true;
+        persistWorkerFlags(WORKER_SESSION_ID, { forceStartNow, spendTokenPool, stopAfterBattle });
+        clearWorkerCommand(WORKER_SESSION_ID);
+        updateStatus("Stop after battle armed");
+        touchProgress();
+        return true;
+    }
+
     function consumeImmediateStartCommand() {
         if (!WORKER_MODE) {
             return false;
@@ -2943,7 +3063,7 @@
 
         forceStartNow = true;
         spendTokenPool = true;
-        persistWorkerFlags(WORKER_SESSION_ID, { forceStartNow, spendTokenPool });
+        persistWorkerFlags(WORKER_SESSION_ID, { forceStartNow, spendTokenPool, stopAfterBattle });
         clearWorkerCommand(WORKER_SESSION_ID);
         updateStatus("Lobby: start now override armed");
         touchProgress();
@@ -2987,6 +3107,8 @@
         battleOutcomeHandled = false;
         forceStartNow = false;
         spendTokenPool = false;
+        stopAfterBattle = false;
+        stopMenuOpen = false;
         workerSession = sessionId;
         localStorage.setItem(WORKER_SESSION_KEY, sessionId);
         clearWorkerCommand(sessionId);
@@ -3013,6 +3135,8 @@
         settings.enabled = false;
         forceStartNow = false;
         spendTokenPool = false;
+        stopAfterBattle = false;
+        stopMenuOpen = false;
         saveSettings();
         previewState = buildPreviewState({
             actionText: "Background idle",
@@ -3021,6 +3145,32 @@
         });
         clearWorkerSessionState(sessionId);
         updateStatus(message);
+    }
+
+    function finalizeStopAfterBattle(message = "Stopped after battle") {
+        if (!WORKER_MODE) {
+            return false;
+        }
+
+        stopAfterBattle = false;
+        forceStartNow = false;
+        spendTokenPool = false;
+        settings.enabled = false;
+        saveSettings();
+        persistWorkerFlags(WORKER_SESSION_ID, { forceStartNow, spendTokenPool, stopAfterBattle });
+        previewState = buildPreviewState({
+            actionText: "Stopped",
+            phase: "idle",
+            eventId: Date.now()
+        });
+        setWorkerUiState({
+            mode: "stopped",
+            showStartNow: false,
+            nextCheckAt: 0
+        });
+        publishWorkerReport("stopped", message);
+        closeCurrentWorkerSoon();
+        return true;
     }
 
     function readWorkerReport() {
@@ -3057,6 +3207,7 @@
             preview,
             forceStartNow,
             spendTokenPool,
+            stopAfterBattle,
             workerUiState: getWorkerUiStateSnapshot()
         }));
 
@@ -3069,12 +3220,12 @@
         const report = readWorkerReport();
         const sessionId = String(workerSession || localStorage.getItem(WORKER_SESSION_KEY) || "").trim();
         if (!sessionId) {
-            return { active: false, text: "Background worker idle", forceStartNow: false, spendTokenPool: false, showStartNow: false };
+            return { active: false, text: "Background worker idle", forceStartNow: false, spendTokenPool: false, stopAfterBattle: false, showStartNow: false };
         }
 
         if (!WORKER_MODE && !workerFrame?.isConnected) {
             clearWorkerSessionState(sessionId);
-            return { active: false, text: "Background worker idle", forceStartNow: false, spendTokenPool: false, showStartNow: false };
+            return { active: false, text: "Background worker idle", forceStartNow: false, spendTokenPool: false, stopAfterBattle: false, showStartNow: false };
         }
 
         const matchingReport = report && report.sessionId === sessionId ? report : null;
@@ -3096,6 +3247,7 @@
                 text: `${detail}${path}`,
                 forceStartNow: !!matchingReport?.forceStartNow,
                 spendTokenPool: !!matchingReport?.spendTokenPool,
+                stopAfterBattle: !!matchingReport?.stopAfterBattle,
                 showStartNow: typeof reportUiState?.showStartNow === "boolean" ? reportUiState.showStartNow : fallbackShowStartNow,
                 mode: String(reportUiState?.mode || ""),
                 tokenCount: Number.isFinite(Number(reportUiState?.tokenCount)) ? Number(reportUiState.tokenCount) : null,
@@ -3108,7 +3260,7 @@
             clearWorkerSessionState(sessionId);
         }
 
-        return { active: false, text: "Background worker idle", forceStartNow: false, spendTokenPool: false, showStartNow: false };
+        return { active: false, text: "Background worker idle", forceStartNow: false, spendTokenPool: false, stopAfterBattle: false, showStartNow: false };
     }
 
     function getWorkerSummaryText() {
@@ -3129,6 +3281,13 @@
             return tokenCount === null
                 ? "Start now is armed. The next token will begin the run immediately."
                 : `Start now is armed. Current tokens: ${tokenCount}. The next token will begin the run immediately.`;
+        }
+
+        if (workerState.stopAfterBattle) {
+            if (mode === "fighting" || mode === "continuing") {
+                return "Stop after battle is armed. Finishing the current battle before stopping.";
+            }
+            return "Stop after battle is armed. No new battle will start.";
         }
 
         if (mode === "monitoring") {
@@ -3300,6 +3459,7 @@
                 return;
             }
 
+            consumeStopAfterBattleCommand();
             consumeImmediateStartCommand();
 
             if (isBattlePage()) {
@@ -3417,6 +3577,12 @@
             "a.action-btn.js-matchmake"
         ]);
 
+        if (stopAfterBattle && !continueButton) {
+            updateStatus("Stopping after the last completed battle");
+            finalizeStopAfterBattle("Stopped after battle");
+            return;
+        }
+
         const tokens = getTokenCount();
         const tokenLabel = Number.isFinite(tokens) ? `tokens ${tokens}` : "tokens unknown";
         const shouldMonitorTokens = WORKER_MODE && settings.enabled;
@@ -3467,7 +3633,7 @@
             if (spendTokenPool && Number.isFinite(tokens) && tokens <= 0) {
                 spendTokenPool = false;
                 forceStartNow = false;
-                persistWorkerFlags(WORKER_SESSION_ID, { forceStartNow, spendTokenPool });
+                persistWorkerFlags(WORKER_SESSION_ID, { forceStartNow, spendTokenPool, stopAfterBattle });
                 displayTokenCount = getTrustedWorkerTokenCount(tokens, {
                     allowZero: true
                 });
@@ -3538,7 +3704,7 @@
         lastJoinAt = Date.now();
         spendTokenPool = spendTokenPool || forceStartNow || (Number.isFinite(tokens) && tokens >= readyTokenCount);
         forceStartNow = false;
-        persistWorkerFlags(WORKER_SESSION_ID, { forceStartNow, spendTokenPool });
+        persistWorkerFlags(WORKER_SESSION_ID, { forceStartNow, spendTokenPool, stopAfterBattle });
         setWorkerUiState({
             mode: spendTokenPool ? "spending" : "queueing",
             tokenCount: displayTokenCount,
@@ -3669,7 +3835,9 @@
             enemyClass: previewState.enemyClass || "shadow",
             phase: "idle"
         });
-        scheduleWorkerRecycle(WORKER_SESSION_ID, `battle-finished:${resolution.outcome || "finished"}`);
+        if (!stopAfterBattle) {
+            scheduleWorkerRecycle(WORKER_SESSION_ID, `battle-finished:${resolution.outcome || "finished"}`);
+        }
         clickElement(backButton, `${outcomeLabel}, returning`);
         return true;
     }
@@ -3871,7 +4039,9 @@
                 recordPreviewEvent("No targets left", "", {
                     phase: "idle"
                 });
-                scheduleWorkerRecycle(WORKER_SESSION_ID, "no-targets-left");
+                if (!stopAfterBattle) {
+                    scheduleWorkerRecycle(WORKER_SESSION_ID, "no-targets-left");
+                }
                 clickElement(backButton, "No targets left, returning");
                 return;
             }

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         GravyPvP
 // @namespace    https://github.com/blazeice123/Veyra-Scripts
-// @version      3.23
+// @version      3.24
 // @description  Auto joins PvP matches, decorates classes with avatars, and adds animated attack effects.
 // @author       GravySEALttv
 // @match        https://demonicscans.org/pvp_battle.php*
@@ -32,7 +32,7 @@
     const LAUNCH_FLAGS = parseLaunchFlags();
     const WORKER_MODE = LAUNCH_FLAGS.worker === "1";
     const WORKER_SESSION_ID = String(LAUNCH_FLAGS.session || "").trim();
-    const SCRIPT_VERSION = "3.23";
+    const SCRIPT_VERSION = "3.24";
     const AVATAR_RENDER_VERSION = "css-sprite-v2";
     const CONFIG = {
         tickMs: 1200,
@@ -175,6 +175,7 @@
     let stopAfterBattle = WORKER_MODE ? readWorkerFlags(WORKER_SESSION_ID).stopAfterBattle : false;
     let workerUiState = restoreWorkerUiState();
     let stopMenuOpen = false;
+    let hostRecycleInFlight = false;
 
     window.addEventListener("error", (event) => {
         if (!shouldCaptureGlobalError(event?.error, event?.filename, event?.message)) {
@@ -2964,7 +2965,7 @@
         }));
     }
 
-    function consumeWorkerRecycle(sessionId = "") {
+    function readWorkerRecycle(sessionId = "") {
         const normalizedSession = String(sessionId || workerSession || WORKER_SESSION_ID || "").trim();
         if (!normalizedSession) {
             return null;
@@ -2974,6 +2975,24 @@
             const raw = localStorage.getItem(WORKER_RECYCLE_KEY);
             const parsed = raw ? JSON.parse(raw) : null;
             if (!parsed || parsed.sessionId !== normalizedSession) {
+                return null;
+            }
+
+            return parsed;
+        } catch (error) {
+            return null;
+        }
+    }
+
+    function consumeWorkerRecycle(sessionId = "") {
+        const normalizedSession = String(sessionId || workerSession || WORKER_SESSION_ID || "").trim();
+        if (!normalizedSession) {
+            return null;
+        }
+
+        try {
+            const parsed = readWorkerRecycle(normalizedSession);
+            if (!parsed) {
                 return null;
             }
 
@@ -3022,6 +3041,35 @@
         localStorage.removeItem(WORKER_COMMAND_KEY);
         localStorage.removeItem(WORKER_FLAGS_KEY);
         localStorage.removeItem(WORKER_RECYCLE_KEY);
+    }
+
+    function recycleBackgroundWorkerFrame(reason = "Refreshing hidden worker after the last battle") {
+        if (WORKER_MODE || hostRecycleInFlight) {
+            return false;
+        }
+
+        const sessionId = String(workerSession || localStorage.getItem(WORKER_SESSION_KEY) || "").trim();
+        if (!sessionId) {
+            return false;
+        }
+
+        hostRecycleInFlight = true;
+        clearWorkerRecycle(sessionId);
+
+        if (workerFrame) {
+            workerFrame.remove();
+            workerFrame = null;
+        }
+
+        const url = new URL("https://demonicscans.org/pvp.php");
+        url.hash = `gravy-worker=1&gravy-session=${encodeURIComponent(sessionId)}`;
+        workerFrame = createHiddenWorkerFrame(url.toString(), `gravy-worker:${sessionId}`);
+        updateStatus(reason);
+
+        window.setTimeout(() => {
+            hostRecycleInFlight = false;
+        }, 1500);
+        return true;
     }
 
     function shouldStopWorkerSession() {
@@ -3506,6 +3554,18 @@
             }
 
             if (!WORKER_MODE && hasBackgroundWorkerSession()) {
+                const sessionId = String(workerSession || localStorage.getItem(WORKER_SESSION_KEY) || "").trim();
+                const recycleRequest = readWorkerRecycle(sessionId);
+                const report = readWorkerReport();
+                const waitingForRecycle = recycleRequest
+                    && report?.sessionId === sessionId
+                    && /\/pvp\.php/i.test(String(report?.path || ""))
+                    && (Date.now() - Number(recycleRequest.issuedAt || 0)) <= 5 * 60 * 1000;
+                if (waitingForRecycle) {
+                    recycleBackgroundWorkerFrame("Refreshing hidden worker after the last battle");
+                    return;
+                }
+
                 if (statusText !== getWorkerSummaryText()) {
                     updateStatus(getWorkerSummaryText());
                 } else {
@@ -3551,15 +3611,14 @@
     async function handleLobbyPage() {
         clearError();
 
-        const recycleRequest = consumeWorkerRecycle(WORKER_SESSION_ID);
+        const recycleRequest = readWorkerRecycle(WORKER_SESSION_ID);
         if (recycleRequest && (Date.now() - Number(recycleRequest.issuedAt || 0)) <= 5 * 60 * 1000) {
             setWorkerUiState({
                 mode: "recycling",
                 showStartNow: false,
                 nextCheckAt: 0
             });
-            updateStatus("Lobby: recycling hidden worker after the last battle");
-            window.location.reload();
+            updateStatus("Lobby: waiting for host to refresh the hidden worker after the last battle");
             return;
         }
 

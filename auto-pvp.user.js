@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         GravyPvP
 // @namespace    https://github.com/blazeice123/Veyra-Scripts
-// @version      3.24
+// @version      3.25
 // @description  Auto joins PvP matches, decorates classes with avatars, and adds animated attack effects.
 // @author       GravySEALttv
 // @match        https://demonicscans.org/pvp_battle.php*
@@ -32,7 +32,7 @@
     const LAUNCH_FLAGS = parseLaunchFlags();
     const WORKER_MODE = LAUNCH_FLAGS.worker === "1";
     const WORKER_SESSION_ID = String(LAUNCH_FLAGS.session || "").trim();
-    const SCRIPT_VERSION = "3.24";
+    const SCRIPT_VERSION = "3.25";
     const AVATAR_RENDER_VERSION = "css-sprite-v2";
     const CONFIG = {
         tickMs: 1200,
@@ -3693,6 +3693,7 @@
                 spendTokenPool = false;
                 forceStartNow = false;
                 persistWorkerFlags(WORKER_SESSION_ID, { forceStartNow, spendTokenPool, stopAfterBattle });
+                scheduleWorkerRecycle(WORKER_SESSION_ID, "token-pool-complete");
                 displayTokenCount = getTrustedWorkerTokenCount(tokens, {
                     allowZero: true
                 });
@@ -3894,9 +3895,6 @@
             enemyClass: previewState.enemyClass || "shadow",
             phase: "idle"
         });
-        if (!stopAfterBattle) {
-            scheduleWorkerRecycle(WORKER_SESSION_ID, `battle-finished:${resolution.outcome || "finished"}`);
-        }
         clickElement(backButton, `${outcomeLabel}, returning`);
         return true;
     }
@@ -4098,9 +4096,6 @@
                 recordPreviewEvent("No targets left", "", {
                     phase: "idle"
                 });
-                if (!stopAfterBattle) {
-                    scheduleWorkerRecycle(WORKER_SESSION_ID, "no-targets-left");
-                }
                 clickElement(backButton, "No targets left, returning");
                 return;
             }

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         GravyPvP
 // @namespace    https://github.com/blazeice123/Veyra-Scripts
-// @version      3.25
+// @version      3.27
 // @description  Auto joins PvP matches, decorates classes with avatars, and adds animated attack effects.
 // @author       GravySEALttv
 // @match        https://demonicscans.org/pvp_battle.php*
@@ -26,13 +26,14 @@
     const WORKER_REPORT_KEY = "gravy_pvp_worker_report_v1";
     const WORKER_FLAGS_KEY = "gravy_pvp_worker_flags_v1";
     const WORKER_RECYCLE_KEY = "gravy_pvp_worker_recycle_v1";
+    const HOST_RESUME_KEY = "gravy_pvp_host_resume_v1";
     const WORKER_SESSION_KEY = "gravy_pvp_worker_session_v1";
     const WORKER_COMMAND_KEY = "gravy_pvp_worker_command_v1";
     const CLASS_KEYS = ["auto", "warrior", "mage", "ranger", "rogue", "healer", "paladin", "necromancer", "monk", "berserker", "shadow"];
     const LAUNCH_FLAGS = parseLaunchFlags();
     const WORKER_MODE = LAUNCH_FLAGS.worker === "1";
     const WORKER_SESSION_ID = String(LAUNCH_FLAGS.session || "").trim();
-    const SCRIPT_VERSION = "3.25";
+    const SCRIPT_VERSION = "3.27";
     const AVATAR_RENDER_VERSION = "css-sprite-v2";
     const CONFIG = {
         tickMs: 1200,
@@ -175,7 +176,7 @@
     let stopAfterBattle = WORKER_MODE ? readWorkerFlags(WORKER_SESSION_ID).stopAfterBattle : false;
     let workerUiState = restoreWorkerUiState();
     let stopMenuOpen = false;
-    let hostRecycleInFlight = false;
+    let hostPageRefreshInFlight = false;
 
     window.addEventListener("error", (event) => {
         if (!shouldCaptureGlobalError(event?.error, event?.filename, event?.message)) {
@@ -207,6 +208,7 @@
             renderPanel();
             installInteractionHooks();
             window.addEventListener("resize", () => scheduleVisualRefresh(80));
+            resumeAfterHostRefreshIfNeeded();
         }
         observePage();
         tick();
@@ -3022,6 +3024,64 @@
         }
     }
 
+    function scheduleHostResume(reason = "", options = {}) {
+        if (WORKER_MODE) {
+            return;
+        }
+
+        localStorage.setItem(HOST_RESUME_KEY, JSON.stringify({
+            reason: String(reason || ""),
+            preserveStats: options.preserveStats !== false,
+            issuedAt: Date.now()
+        }));
+    }
+
+    function readHostResume() {
+        try {
+            const raw = localStorage.getItem(HOST_RESUME_KEY);
+            const parsed = raw ? JSON.parse(raw) : null;
+            return parsed && typeof parsed === "object" ? parsed : null;
+        } catch (error) {
+            return null;
+        }
+    }
+
+    function clearHostResume() {
+        localStorage.removeItem(HOST_RESUME_KEY);
+    }
+
+    function consumeHostResume(maxAgeMs = 10 * 60 * 1000) {
+        const request = readHostResume();
+        if (!request) {
+            return null;
+        }
+
+        clearHostResume();
+        const issuedAt = Number(request.issuedAt || 0);
+        if (!issuedAt || (Date.now() - issuedAt) > maxAgeMs) {
+            return null;
+        }
+
+        return request;
+    }
+
+    function resumeAfterHostRefreshIfNeeded() {
+        if (WORKER_MODE) {
+            return false;
+        }
+
+        const resumeRequest = consumeHostResume();
+        if (!resumeRequest) {
+            return false;
+        }
+
+        startBackgroundWorker({
+            preserveStats: resumeRequest.preserveStats !== false,
+            resumeReason: String(resumeRequest.reason || "page-refresh")
+        });
+        return true;
+    }
+
     function clearWorkerSessionState(sessionId = "") {
         const normalizedSession = String(sessionId || workerSession || localStorage.getItem(WORKER_SESSION_KEY) || "").trim();
         if (normalizedSession) {
@@ -3043,8 +3103,8 @@
         localStorage.removeItem(WORKER_RECYCLE_KEY);
     }
 
-    function recycleBackgroundWorkerFrame(reason = "Refreshing hidden worker after the last battle") {
-        if (WORKER_MODE || hostRecycleInFlight) {
+    function refreshVisibleHostPage(reason = "Refreshing the visible PvP page after the token run") {
+        if (WORKER_MODE || hostPageRefreshInFlight) {
             return false;
         }
 
@@ -3053,22 +3113,14 @@
             return false;
         }
 
-        hostRecycleInFlight = true;
-        clearWorkerRecycle(sessionId);
-
-        if (workerFrame) {
-            workerFrame.remove();
-            workerFrame = null;
-        }
-
-        const url = new URL("https://demonicscans.org/pvp.php");
-        url.hash = `gravy-worker=1&gravy-session=${encodeURIComponent(sessionId)}`;
-        workerFrame = createHiddenWorkerFrame(url.toString(), `gravy-worker:${sessionId}`);
+        hostPageRefreshInFlight = true;
+        scheduleHostResume(reason, { preserveStats: true });
+        clearWorkerSessionState(sessionId);
         updateStatus(reason);
 
         window.setTimeout(() => {
-            hostRecycleInFlight = false;
-        }, 1500);
+            window.location.reload();
+        }, 120);
         return true;
     }
 
@@ -3137,11 +3189,14 @@
         }, 140);
     }
 
-    function startBackgroundWorker() {
+    function startBackgroundWorker(options = {}) {
         if (WORKER_MODE) {
             syncPanelState();
             return;
         }
+
+        const preserveStats = !!options.preserveStats;
+        const resumeReason = String(options.resumeReason || "").trim();
 
         if (getCurrentWorkerState().active) {
             syncPanelState();
@@ -3151,7 +3206,10 @@
         const sessionId = buildWorkerSessionId();
         settings.enabled = true;
         saveSettings();
-        resetBattleStats();
+        clearHostResume();
+        if (!preserveStats) {
+            resetBattleStats();
+        }
         battleOutcomeHandled = false;
         forceStartNow = false;
         spendTokenPool = false;
@@ -3162,12 +3220,12 @@
         clearWorkerCommand(sessionId);
         clearWorkerFlags(sessionId);
         clearWorkerRecycle(sessionId);
-        publishWorkerReport("starting", "Launching hidden background worker", sessionId);
+        publishWorkerReport("starting", resumeReason ? "Resuming hidden background worker after page refresh" : "Launching hidden background worker", sessionId);
 
         const url = new URL("https://demonicscans.org/pvp.php");
         url.hash = `gravy-worker=1&gravy-session=${encodeURIComponent(sessionId)}`;
         workerFrame = createHiddenWorkerFrame(url.toString(), `gravy-worker:${sessionId}`);
-        updateStatus("Started hidden background worker");
+        updateStatus(resumeReason ? "Visible page refreshed. Monitoring resumed." : "Started hidden background worker");
     }
 
     function stopBackgroundWorker(message = "Stopped hidden background worker") {
@@ -3185,6 +3243,7 @@
         spendTokenPool = false;
         stopAfterBattle = false;
         stopMenuOpen = false;
+        clearHostResume();
         saveSettings();
         previewState = buildPreviewState({
             actionText: "Background idle",
@@ -3204,6 +3263,7 @@
         forceStartNow = false;
         spendTokenPool = false;
         settings.enabled = false;
+        clearHostResume();
         saveSettings();
         persistWorkerFlags(WORKER_SESSION_ID, { forceStartNow, spendTokenPool, stopAfterBattle });
         previewState = buildPreviewState({
@@ -3562,7 +3622,7 @@
                     && /\/pvp\.php/i.test(String(report?.path || ""))
                     && (Date.now() - Number(recycleRequest.issuedAt || 0)) <= 5 * 60 * 1000;
                 if (waitingForRecycle) {
-                    recycleBackgroundWorkerFrame("Refreshing hidden worker after the last battle");
+                    refreshVisibleHostPage("Refreshing the visible PvP page after the token run");
                     return;
                 }
 
@@ -3618,7 +3678,7 @@
                 showStartNow: false,
                 nextCheckAt: 0
             });
-            updateStatus("Lobby: waiting for host to refresh the hidden worker after the last battle");
+            updateStatus("Lobby: waiting for the visible PvP page to refresh after the token run");
             return;
         }
 

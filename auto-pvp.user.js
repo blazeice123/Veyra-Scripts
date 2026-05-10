@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         GravyPvP
 // @namespace    https://github.com/blazeice123/Veyra-Scripts
-// @version      3.27
+// @version      3.28
 // @description  Auto joins PvP matches, decorates classes with avatars, and adds animated attack effects.
 // @author       GravySEALttv
 // @match        https://demonicscans.org/pvp_battle.php*
@@ -33,7 +33,7 @@
     const LAUNCH_FLAGS = parseLaunchFlags();
     const WORKER_MODE = LAUNCH_FLAGS.worker === "1";
     const WORKER_SESSION_ID = String(LAUNCH_FLAGS.session || "").trim();
-    const SCRIPT_VERSION = "3.27";
+    const SCRIPT_VERSION = "3.28";
     const AVATAR_RENDER_VERSION = "css-sprite-v2";
     const CONFIG = {
         tickMs: 1200,
@@ -299,6 +299,15 @@
     function toNonNegativeInt(value) {
         const parsed = Number.parseInt(value, 10);
         return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
+    }
+
+    function formatTrackedCount(value) {
+        const parsed = Number(value);
+        if (!Number.isFinite(parsed) || parsed < 0) {
+            return "--";
+        }
+
+        return Math.floor(parsed).toLocaleString();
     }
 
     function saveBattleStats() {
@@ -762,7 +771,7 @@
 
             #${PANEL_ID} .apvp-stats {
                 display: grid;
-                grid-template-columns: repeat(2, minmax(0, 1fr));
+                grid-template-columns: repeat(3, minmax(0, 1fr));
                 gap: 8px;
             }
 
@@ -1320,6 +1329,10 @@
             }
 
             @media (max-width: 360px) {
+                #${PANEL_ID} .apvp-stats {
+                    grid-template-columns: repeat(2, minmax(0, 1fr));
+                }
+
                 #${PANEL_ID} .apvp-row {
                     grid-template-columns: 1fr;
                 }
@@ -2068,6 +2081,10 @@
                             <span class="apvp-stat-label">Losses</span>
                             <span class="apvp-stat-value" data-stat="losses">0</span>
                         </div>
+                        <div class="apvp-stat">
+                            <span class="apvp-stat-label">Souls</span>
+                            <span class="apvp-stat-value" data-stat="souls">--</span>
+                        </div>
                     </div>
                     <div class="apvp-preview"></div>
                     <div class="apvp-row">
@@ -2125,6 +2142,7 @@
         }
 
         const currentStats = getBattleStats();
+        const workerState = getCurrentWorkerState();
         const winsNode = panel.querySelector('[data-stat="wins"]');
         if (winsNode) {
             winsNode.textContent = String(currentStats.wins);
@@ -2135,13 +2153,17 @@
             lossesNode.textContent = String(currentStats.losses);
         }
 
+        const soulsNode = panel.querySelector('[data-stat="souls"]');
+        if (soulsNode) {
+            soulsNode.textContent = formatTrackedCount(getDisplaySoulCount(workerState));
+        }
+
         const statusNode = panel.querySelector(".apvp-status");
         if (statusNode) {
             statusNode.textContent = statusText;
         }
 
         const workerNode = panel.querySelector(".apvp-worker");
-        const workerState = getCurrentWorkerState();
         if (workerNode) {
             workerNode.textContent = workerState.text;
         }
@@ -2763,6 +2785,7 @@
                 ? (isBattlePage() ? "fighting" : isLobbyPage() ? "monitoring" : "running")
                 : "idle",
             tokenCount: null,
+            soulCount: null,
             readyTokenCount: Number(CONFIG.readyTokenCount) || 30,
             nextCheckAt: 0,
             showStartNow: false
@@ -2789,6 +2812,7 @@
                 ...fallback,
                 mode: String(uiState.mode || fallback.mode || "running"),
                 tokenCount: Number.isFinite(Number(uiState.tokenCount)) ? Number(uiState.tokenCount) : fallback.tokenCount,
+                soulCount: Number.isFinite(Number(uiState.soulCount)) ? Number(uiState.soulCount) : fallback.soulCount,
                 readyTokenCount: Number.isFinite(Number(uiState.readyTokenCount)) ? Number(uiState.readyTokenCount) : fallback.readyTokenCount,
                 nextCheckAt: Number.isFinite(Number(uiState.nextCheckAt)) ? Number(uiState.nextCheckAt) : fallback.nextCheckAt,
                 showStartNow: !!uiState.showStartNow
@@ -2811,6 +2835,12 @@
             const parsedTokenCount = Number(next.tokenCount);
             merged.tokenCount = Number.isFinite(parsedTokenCount) && parsedTokenCount >= 0
                 ? Math.floor(parsedTokenCount)
+                : null;
+        }
+        if (Object.prototype.hasOwnProperty.call(next, "soulCount")) {
+            const parsedSoulCount = Number(next.soulCount);
+            merged.soulCount = Number.isFinite(parsedSoulCount) && parsedSoulCount >= 0
+                ? Math.floor(parsedSoulCount)
                 : null;
         }
         if (Object.prototype.hasOwnProperty.call(next, "readyTokenCount")) {
@@ -2849,10 +2879,26 @@
         return previousCount;
     }
 
+    function getTrustedWorkerSoulCount(rawSoulCount, options = {}) {
+        const parsedRaw = Number(rawSoulCount);
+        const previousCount = Number.isFinite(Number(workerUiState.soulCount)) ? Number(workerUiState.soulCount) : null;
+        const allowZero = options.allowZero !== false;
+
+        if (Number.isFinite(parsedRaw)) {
+            const normalized = Math.floor(parsedRaw);
+            if (normalized > 0 || (normalized === 0 && allowZero)) {
+                return normalized;
+            }
+        }
+
+        return previousCount;
+    }
+
     function getWorkerUiStateSnapshot() {
         return {
             mode: String(workerUiState.mode || "running"),
             tokenCount: Number.isFinite(Number(workerUiState.tokenCount)) ? Number(workerUiState.tokenCount) : null,
+            soulCount: Number.isFinite(Number(workerUiState.soulCount)) ? Number(workerUiState.soulCount) : null,
             readyTokenCount: Number.isFinite(Number(workerUiState.readyTokenCount)) ? Number(workerUiState.readyTokenCount) : (Number(CONFIG.readyTokenCount) || 30),
             nextCheckAt: Number.isFinite(Number(workerUiState.nextCheckAt)) ? Number(workerUiState.nextCheckAt) : 0,
             showStartNow: !!workerUiState.showStartNow
@@ -3328,12 +3374,12 @@
         const report = readWorkerReport();
         const sessionId = String(workerSession || localStorage.getItem(WORKER_SESSION_KEY) || "").trim();
         if (!sessionId) {
-            return { active: false, text: "Background worker idle", forceStartNow: false, spendTokenPool: false, stopAfterBattle: false, showStartNow: false };
+            return { active: false, text: "Background worker idle", forceStartNow: false, spendTokenPool: false, stopAfterBattle: false, showStartNow: false, soulCount: null };
         }
 
         if (!WORKER_MODE && !workerFrame?.isConnected) {
             clearWorkerSessionState(sessionId);
-            return { active: false, text: "Background worker idle", forceStartNow: false, spendTokenPool: false, stopAfterBattle: false, showStartNow: false };
+            return { active: false, text: "Background worker idle", forceStartNow: false, spendTokenPool: false, stopAfterBattle: false, showStartNow: false, soulCount: null };
         }
 
         const matchingReport = report && report.sessionId === sessionId ? report : null;
@@ -3359,6 +3405,7 @@
                 showStartNow: typeof reportUiState?.showStartNow === "boolean" ? reportUiState.showStartNow : fallbackShowStartNow,
                 mode: String(reportUiState?.mode || ""),
                 tokenCount: Number.isFinite(Number(reportUiState?.tokenCount)) ? Number(reportUiState.tokenCount) : null,
+                soulCount: Number.isFinite(Number(reportUiState?.soulCount)) ? Number(reportUiState.soulCount) : null,
                 readyTokenCount: Number.isFinite(Number(reportUiState?.readyTokenCount)) ? Number(reportUiState.readyTokenCount) : (Number(CONFIG.readyTokenCount) || 30),
                 nextCheckAt: Number.isFinite(Number(reportUiState?.nextCheckAt)) ? Number(reportUiState.nextCheckAt) : 0
             };
@@ -3368,7 +3415,7 @@
             clearWorkerSessionState(sessionId);
         }
 
-        return { active: false, text: "Background worker idle", forceStartNow: false, spendTokenPool: false, stopAfterBattle: false, showStartNow: false };
+        return { active: false, text: "Background worker idle", forceStartNow: false, spendTokenPool: false, stopAfterBattle: false, showStartNow: false, soulCount: null };
     }
 
     function getWorkerSummaryText() {
@@ -3548,6 +3595,12 @@
                 } else {
                     refreshBattleVisuals();
                 }
+            }
+
+            if (WORKER_MODE) {
+                setWorkerUiState({
+                    soulCount: getTrustedWorkerSoulCount(getPlayerSoulCount())
+                });
             }
 
             if (shouldStopWorkerSession()) {
@@ -5164,6 +5217,11 @@
         return button.textContent?.replace(/\s+/g, " ").trim() || "skill";
     }
 
+    function parseIntegerFromText(value) {
+        const match = String(value || "").replace(/,/g, "").match(/-?\d+/);
+        return match ? Number.parseInt(match[0], 10) : Number.NaN;
+    }
+
     function getTokenCount() {
         const selectors = [
             ".info-pill:last-child span",
@@ -5178,13 +5236,92 @@
             }
 
             const raw = element.getAttribute("data-token-count") || element.textContent || "";
-            const match = raw.replace(/,/g, "").match(/-?\d+/);
-            if (match) {
-                return Number.parseInt(match[0], 10);
+            const parsed = parseIntegerFromText(raw);
+            if (Number.isFinite(parsed)) {
+                return parsed;
             }
         }
 
         return Number.NaN;
+    }
+
+    function getPlayerSoulCount() {
+        const directSelectors = [
+            "[data-player-souls]",
+            "[data-player-soul-count]",
+            "[data-player-souls-count]",
+            "[data-soul-count]"
+        ];
+
+        for (const selector of directSelectors) {
+            const element = document.querySelector(selector);
+            if (!element) {
+                continue;
+            }
+
+            const raw = element.getAttribute("data-player-souls")
+                || element.getAttribute("data-player-soul-count")
+                || element.getAttribute("data-player-souls-count")
+                || element.getAttribute("data-soul-count")
+                || element.textContent
+                || "";
+            const parsed = parseIntegerFromText(raw);
+            if (Number.isFinite(parsed) && parsed >= 0) {
+                return parsed;
+            }
+        }
+
+        const labeledSelectors = [
+            ".info-pill",
+            "[class*='pill']",
+            "[class*='badge']",
+            "[class*='chip']",
+            "[class*='stat']",
+            "[class*='season'] *",
+            ".section-stat-row",
+            ".section-stat-row *"
+        ];
+        const seen = new Set();
+
+        for (const selector of labeledSelectors) {
+            const elements = document.querySelectorAll(selector);
+            for (const element of elements) {
+                if (!(element instanceof HTMLElement) || seen.has(element)) {
+                    continue;
+                }
+                seen.add(element);
+
+                const text = element.textContent?.replace(/\s+/g, " ").trim() || "";
+                if (!text || text.length > 90) {
+                    continue;
+                }
+                if (!/\bplayer\s*souls?\b/i.test(text)) {
+                    continue;
+                }
+                if (/\b(refill|refilled|gems|cost|reward|rewards|shop)\b/i.test(text)) {
+                    continue;
+                }
+
+                const parsed = parseIntegerFromText(text);
+                if (Number.isFinite(parsed) && parsed >= 0) {
+                    return parsed;
+                }
+            }
+        }
+
+        return Number.NaN;
+    }
+
+    function getDisplaySoulCount(workerState = null) {
+        const workerSoulCount = Number(workerState?.soulCount);
+        if (Number.isFinite(workerSoulCount) && workerSoulCount >= 0) {
+            return Math.floor(workerSoulCount);
+        }
+
+        const pageSoulCount = getPlayerSoulCount();
+        return Number.isFinite(pageSoulCount) && pageSoulCount >= 0
+            ? pageSoulCount
+            : Number.NaN;
     }
 
     function hasResultBanner() {

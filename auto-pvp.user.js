@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         GravyPvP
 // @namespace    https://github.com/blazeice123/Veyra-Scripts
-// @version      3.38
+// @version      3.39
 // @description  Auto joins PvP matches, decorates classes with avatars, and adds animated attack effects.
 // @author       GravySEALttv
 // @match        https://demonicscans.org/pvp_battle.php*
@@ -34,7 +34,7 @@
     const LAUNCH_FLAGS = parseLaunchFlags();
     const WORKER_MODE = LAUNCH_FLAGS.worker === "1";
     const WORKER_SESSION_ID = String(LAUNCH_FLAGS.session || "").trim();
-    const SCRIPT_VERSION = "3.38";
+    const SCRIPT_VERSION = "3.39";
     const DEFAULT_CLASS_KEY = "warrior";
     const AVATAR_ART = window.GRAVY_PVP_AVATAR_ART || {};
     const HAS_AVATAR_ART = !!AVATAR_ART && Object.keys(AVATAR_ART).length > 0;
@@ -4800,6 +4800,121 @@
         ].filter(Boolean).join(" ");
     }
 
+    function getBattleStateData() {
+        if (typeof stateData !== "undefined" && stateData && typeof stateData === "object") {
+            return stateData;
+        }
+
+        if (typeof window !== "undefined" && window.stateData && typeof window.stateData === "object") {
+            return window.stateData;
+        }
+
+        return null;
+    }
+
+    function getBattleStateUnit(slot, team) {
+        if (!(slot instanceof Element)) {
+            return null;
+        }
+
+        const state = getBattleStateData();
+        const side = team === "enemy" ? "enemy" : "ally";
+        const playersByNum = state?.teams?.[side]?.players_by_num;
+        if (!playersByNum) {
+            return null;
+        }
+
+        const slotNum = String(slot.getAttribute("data-slot") || slot.dataset.slot || "").trim();
+        const username = String(slot.getAttribute("data-username") || slot.dataset.username || "").trim();
+
+        if (slotNum) {
+            if (Array.isArray(playersByNum)) {
+                const byIndex = playersByNum[Number(slotNum) - 1] || playersByNum[Number(slotNum)];
+                if (byIndex && typeof byIndex === "object") {
+                    return byIndex;
+                }
+            } else if (typeof playersByNum === "object" && playersByNum[slotNum] && typeof playersByNum[slotNum] === "object") {
+                return playersByNum[slotNum];
+            }
+        }
+
+        const entries = Array.isArray(playersByNum) ? playersByNum : Object.values(playersByNum);
+        return entries.find((unit) => {
+            if (!unit || typeof unit !== "object") {
+                return false;
+            }
+
+            const unitSlot = String(unit.slot ?? unit.num ?? unit.position ?? unit.player_num ?? "").trim();
+            const unitName = String(unit.username ?? unit.name ?? unit.display_name ?? unit.player_name ?? "").trim();
+            return (slotNum && unitSlot && unitSlot === slotNum) || (username && unitName && unitName === username);
+        }) || null;
+    }
+
+    function collectBattleStateClassHints(value, depth = 0) {
+        if (depth > 2 || value == null) {
+            return [];
+        }
+
+        if (typeof value === "string" || typeof value === "number") {
+            return [String(value)];
+        }
+
+        if (Array.isArray(value)) {
+            return value.flatMap((item) => collectBattleStateClassHints(item, depth + 1));
+        }
+
+        if (typeof value !== "object") {
+            return [];
+        }
+
+        const directKeys = [
+            "class",
+            "class_name",
+            "classname",
+            "player_class",
+            "unit_class",
+            "job",
+            "job_name",
+            "role",
+            "role_name",
+            "spec",
+            "specialization",
+            "promotion",
+            "advanced_class"
+        ];
+
+        const hints = [];
+        for (const [key, raw] of Object.entries(value)) {
+            const normalizedKey = String(key || "").trim().toLowerCase();
+            if (directKeys.includes(normalizedKey)) {
+                hints.push(String(raw));
+                continue;
+            }
+
+            if (/(class|job|role|spec|promotion)/i.test(normalizedKey)) {
+                hints.push(String(raw));
+                continue;
+            }
+
+            if (depth < 2 && raw && typeof raw === "object") {
+                hints.push(...collectBattleStateClassHints(raw, depth + 1));
+            }
+        }
+
+        return hints;
+    }
+
+    function readBattleStateClassHints(slot, team) {
+        const unit = getBattleStateUnit(slot, team);
+        if (!unit) {
+            return "";
+        }
+
+        return collectBattleStateClassHints(unit)
+            .filter(Boolean)
+            .join(" ");
+    }
+
     function getCachedSlotClassKey(slot, team) {
         if (!(slot instanceof HTMLElement)) {
             return null;
@@ -4837,6 +4952,11 @@
 
         if (team === "ally" && settings.playerClass !== "auto") {
             return setCachedSlotClassKey(slot, settings.playerClass);
+        }
+
+        const battleStateDetected = detectClassKey(readBattleStateClassHints(slot, team));
+        if (battleStateDetected) {
+            return setCachedSlotClassKey(slot, battleStateDetected);
         }
 
         const cached = getCachedSlotClassKey(slot, team);

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         GravyPvP
 // @namespace    https://github.com/blazeice123/Veyra-Scripts
-// @version      3.37
+// @version      3.38
 // @description  Auto joins PvP matches, decorates classes with avatars, and adds animated attack effects.
 // @author       GravySEALttv
 // @match        https://demonicscans.org/pvp_battle.php*
@@ -34,7 +34,7 @@
     const LAUNCH_FLAGS = parseLaunchFlags();
     const WORKER_MODE = LAUNCH_FLAGS.worker === "1";
     const WORKER_SESSION_ID = String(LAUNCH_FLAGS.session || "").trim();
-    const SCRIPT_VERSION = "3.37";
+    const SCRIPT_VERSION = "3.38";
     const DEFAULT_CLASS_KEY = "warrior";
     const AVATAR_ART = window.GRAVY_PVP_AVATAR_ART || {};
     const HAS_AVATAR_ART = !!AVATAR_ART && Object.keys(AVATAR_ART).length > 0;
@@ -859,7 +859,7 @@
                 width: 52px;
                 height: 62px;
                 overflow: visible;
-                animation: none;
+                animation: apvp-bob 2.6s ease-in-out infinite;
                 opacity: 1;
                 visibility: visible;
             }

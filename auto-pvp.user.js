@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         GravyPvP
 // @namespace    https://github.com/blazeice123/Veyra-Scripts
-// @version      3.35
+// @version      3.36
 // @description  Auto joins PvP matches, decorates classes with avatars, and adds animated attack effects.
 // @author       GravySEALttv
 // @match        https://demonicscans.org/pvp_battle.php*
@@ -34,7 +34,7 @@
     const LAUNCH_FLAGS = parseLaunchFlags();
     const WORKER_MODE = LAUNCH_FLAGS.worker === "1";
     const WORKER_SESSION_ID = String(LAUNCH_FLAGS.session || "").trim();
-    const SCRIPT_VERSION = "3.35";
+    const SCRIPT_VERSION = "3.36";
     const DEFAULT_CLASS_KEY = "warrior";
     const AVATAR_ART = window.GRAVY_PVP_AVATAR_ART || {};
     const HAS_AVATAR_ART = !!AVATAR_ART && Object.keys(AVATAR_ART).length > 0;
@@ -2335,16 +2335,20 @@
             container.dataset.previewKey = "";
         }
 
-        if (container.dataset.previewKey === previewKey) {
-            return;
-        }
-
         const allySide = container.querySelector(".apvp-preview-side.ally");
         const enemySide = container.querySelector(".apvp-preview-side.enemy");
         const allyVisual = ensurePreviewVisualShell(allySide, preview.allyClass, "ally");
         const enemyVisual = ensurePreviewVisualShell(enemySide, preview.enemyClass || getDefaultEnemyClassKey(preview.allyClass), "enemy");
         const labelNode = container.querySelector(".apvp-preview-label");
         const phase = String(preview.phase || "idle");
+        const hasRequiredPreviewNodes = allyVisual?.querySelector(".apvp-avatar")
+            && enemyVisual?.querySelector(".apvp-avatar")
+            && container.querySelector(".apvp-preview-effect")
+            && labelNode;
+
+        if (container.dataset.previewKey === previewKey && hasRequiredPreviewNodes) {
+            return;
+        }
 
         syncPreviewAvatar(allyVisual, preview.allyClass, "ally");
         syncPreviewAvatar(enemyVisual, preview.enemyClass || getDefaultEnemyClassKey(preview.allyClass), "enemy");

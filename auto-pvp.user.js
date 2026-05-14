@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         GravyPvP
 // @namespace    https://github.com/blazeice123/Veyra-Scripts
-// @version      3.31
+// @version      3.32
 // @description  Auto joins PvP matches, decorates classes with avatars, and adds animated attack effects.
 // @author       GravySEALttv
 // @match        https://demonicscans.org/pvp_battle.php*
@@ -34,7 +34,7 @@
     const LAUNCH_FLAGS = parseLaunchFlags();
     const WORKER_MODE = LAUNCH_FLAGS.worker === "1";
     const WORKER_SESSION_ID = String(LAUNCH_FLAGS.session || "").trim();
-    const SCRIPT_VERSION = "3.31";
+    const SCRIPT_VERSION = "3.32";
     const DEFAULT_CLASS_KEY = "warrior";
     const AVATAR_ART = window.GRAVY_PVP_AVATAR_ART || {};
     const HAS_AVATAR_ART = !!AVATAR_ART && Object.keys(AVATAR_ART).length > 0;
@@ -4730,6 +4730,74 @@
         return rect.top < window.innerHeight / 2 ? "enemy" : "ally";
     }
 
+    function readStrongSlotClassHints(slot) {
+        if (!(slot instanceof Element)) {
+            return "";
+        }
+
+        return [
+            slot.getAttribute("data-class"),
+            slot.getAttribute("data-role"),
+            slot.getAttribute("data-class-name"),
+            slot.getAttribute("data-unit-class"),
+            slot.dataset.class,
+            slot.dataset.role,
+            slot.dataset.className,
+            slot.dataset.unitClass,
+            readTextCandidates(slot, [
+                ".class-name",
+                ".role",
+                ".job",
+                ".class",
+                ".unitClass",
+                ".unit-role"
+            ])
+        ].filter(Boolean).join(" ");
+    }
+
+    function readWeakSlotClassHints(slot) {
+        if (!(slot instanceof Element)) {
+            return "";
+        }
+
+        return [
+            readTextCandidates(slot, [
+                ".sub",
+                ".name"
+            ]),
+            slot.textContent
+        ].filter(Boolean).join(" ");
+    }
+
+    function getCachedSlotClassKey(slot, team) {
+        if (!(slot instanceof HTMLElement)) {
+            return null;
+        }
+
+        const cached = normalizeClassKey(slot.dataset.apvpResolvedClass || "");
+        if (!cached || cached === "auto") {
+            return null;
+        }
+
+        if (team === "enemy" && !CLASS_KEYS.includes(cached)) {
+            return null;
+        }
+
+        return cached;
+    }
+
+    function setCachedSlotClassKey(slot, classKey) {
+        if (!(slot instanceof HTMLElement)) {
+            return classKey;
+        }
+
+        const normalized = normalizeClassKey(classKey);
+        if (normalized && normalized !== "auto") {
+            slot.dataset.apvpResolvedClass = normalized;
+        }
+        return normalized;
+    }
+
     function resolveSlotClassKey(slot, team) {
         if (!(slot instanceof Element)) {
             const allyClass = getSelectedPlayerClassKey() || DEFAULT_CLASS_KEY;
@@ -4737,38 +4805,33 @@
         }
 
         if (team === "ally" && settings.playerClass !== "auto") {
-            return settings.playerClass;
+            return setCachedSlotClassKey(slot, settings.playerClass);
         }
 
-        const hints = [
-            slot.getAttribute("data-class"),
-            slot.getAttribute("data-role"),
-            slot.dataset.class,
-            readTextCandidates(slot, [
-                ".class-name",
-                ".role",
-                ".job",
-                ".class",
-                ".unitClass",
-                ".unit-role",
-                ".sub",
-                ".name"
-            ]),
-            slot.textContent
-        ];
+        const cached = getCachedSlotClassKey(slot, team);
+        const strongDetected = detectClassKey(readStrongSlotClassHints(slot));
+        if (strongDetected) {
+            return setCachedSlotClassKey(slot, strongDetected);
+        }
+
+        if (cached) {
+            return cached;
+        }
 
         if (team === "ally") {
-            hints.push(detectSelectedPlayerClass());
-            hints.push(getSkillHintClass());
+            const allyDetected = detectSelectedPlayerClass() || getSkillHintClass();
+            if (allyDetected) {
+                return setCachedSlotClassKey(slot, allyDetected);
+            }
         }
 
-        const detected = detectClassKey(hints.join(" "));
-        if (detected) {
-            return detected;
+        const weakDetected = detectClassKey(readWeakSlotClassHints(slot));
+        if (weakDetected) {
+            return setCachedSlotClassKey(slot, weakDetected);
         }
 
         const allyClass = getSelectedPlayerClassKey() || DEFAULT_CLASS_KEY;
-        return team === "enemy" ? getDefaultEnemyClassKey(allyClass) : allyClass;
+        return setCachedSlotClassKey(slot, team === "enemy" ? getDefaultEnemyClassKey(allyClass) : allyClass);
     }
 
     function readTextCandidates(root, selectors) {

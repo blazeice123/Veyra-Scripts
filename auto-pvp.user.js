@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         GravyPvP
 // @namespace    https://github.com/blazeice123/Veyra-Scripts
-// @version      3.28
+// @version      3.29
 // @description  Auto joins PvP matches, decorates classes with avatars, and adds animated attack effects.
 // @author       GravySEALttv
 // @match        https://demonicscans.org/pvp_battle.php*
@@ -10,6 +10,7 @@
 // @homepageURL  https://github.com/blazeice123/Veyra-Scripts/tree/main
 // @updateURL    https://raw.githubusercontent.com/blazeice123/Veyra-Scripts/main/auto-pvp.user.js
 // @downloadURL  https://raw.githubusercontent.com/blazeice123/Veyra-Scripts/main/auto-pvp.user.js
+// @require      https://raw.githubusercontent.com/blazeice123/Veyra-Scripts/main/gravy-pvp-avatars.js
 // @grant        none
 // @run-at       document-idle
 // ==/UserScript==
@@ -29,12 +30,14 @@
     const HOST_RESUME_KEY = "gravy_pvp_host_resume_v1";
     const WORKER_SESSION_KEY = "gravy_pvp_worker_session_v1";
     const WORKER_COMMAND_KEY = "gravy_pvp_worker_command_v1";
-    const CLASS_KEYS = ["auto", "warrior", "mage", "ranger", "rogue", "healer", "paladin", "necromancer", "monk", "berserker", "shadow"];
+    const CLASS_KEYS = ["auto", "warrior", "mage", "hunter", "cleric", "assassin", "archer", "berserker", "grand-mage", "saint", "paladin", "inquisitor", "magic-knight"];
     const LAUNCH_FLAGS = parseLaunchFlags();
     const WORKER_MODE = LAUNCH_FLAGS.worker === "1";
     const WORKER_SESSION_ID = String(LAUNCH_FLAGS.session || "").trim();
-    const SCRIPT_VERSION = "3.28";
-    const AVATAR_RENDER_VERSION = "css-sprite-v2";
+    const SCRIPT_VERSION = "3.29";
+    const DEFAULT_CLASS_KEY = "warrior";
+    const AVATAR_ART = window.GRAVY_PVP_AVATAR_ART || {};
+    const AVATAR_RENDER_VERSION = "image-sprite-v1";
     const CONFIG = {
         tickMs: 1200,
         actionCooldownMs: 1000,
@@ -70,11 +73,6 @@
         ".team-ally"
     ];
     const CLASS_PROFILES = {
-        adventurer: {
-            label: "Adventurer",
-            effect: "slash",
-            colors: ["#83b8ff", "#e7f1ff"]
-        },
         warrior: {
             label: "Warrior",
             effect: "slash",
@@ -85,45 +83,55 @@
             effect: "arcane-burst",
             colors: ["#4fc3ff", "#a57cff"]
         },
-        ranger: {
-            label: "Ranger",
+        hunter: {
+            label: "Hunter",
             effect: "arrow-shot",
             colors: ["#67d77e", "#d4ff7a"]
         },
-        rogue: {
-            label: "Rogue",
+        cleric: {
+            label: "Cleric",
+            effect: "heal",
+            colors: ["#7fffd4", "#f7ffbc"]
+        },
+        assassin: {
+            label: "Assassin",
             effect: "shadow-reap",
             colors: ["#7bd8ff", "#9fb7ff"]
         },
-        healer: {
-            label: "Healer",
-            effect: "heal",
-            colors: ["#7fffd4", "#f7ffbc"]
+        archer: {
+            label: "Archer",
+            effect: "arrow-volley",
+            colors: ["#8ce0ff", "#d8ff9a"]
         },
         paladin: {
             label: "Paladin",
             effect: "holy-smite",
             colors: ["#ffd76b", "#fff5bf"]
         },
-        necromancer: {
-            label: "Necromancer",
-            effect: "shadow-reap",
-            colors: ["#b77dff", "#56d69f"]
-        },
-        monk: {
-            label: "Monk",
-            effect: "martial-impact",
-            colors: ["#ffbf72", "#ffe99e"]
-        },
         berserker: {
             label: "Berserker",
             effect: "power-slash",
             colors: ["#ff5d68", "#ffb56b"]
         },
-        shadow: {
-            label: "Shadow",
-            effect: "shadow-reap",
-            colors: ["#7f86a7", "#c0a6ff"]
+        "grand-mage": {
+            label: "Grand Mage",
+            effect: "meteor",
+            colors: ["#8f74ff", "#e0b0ff"]
+        },
+        saint: {
+            label: "Saint",
+            effect: "heal",
+            colors: ["#b0ffd9", "#fff4c7"]
+        },
+        inquisitor: {
+            label: "Inquisitor",
+            effect: "holy-smite",
+            colors: ["#ffe2aa", "#ffd06e"]
+        },
+        "magic-knight": {
+            label: "Magic Knight",
+            effect: "arcane-burst",
+            colors: ["#7fbaff", "#8fdfff"]
         }
     };
     const SKILL_EFFECT_PATTERNS = [
@@ -2263,11 +2271,16 @@
         }
     }
 
+    function getDefaultEnemyClassKey(allyClass = DEFAULT_CLASS_KEY) {
+        const normalizedAlly = normalizeClassKey(allyClass);
+        return normalizedAlly === "assassin" ? "warrior" : "assassin";
+    }
+
     function buildPreviewState(overrides = {}) {
-        const selectedClass = getSelectedPlayerClassKey() || "adventurer";
+        const selectedClass = getSelectedPlayerClassKey() || DEFAULT_CLASS_KEY;
         return {
             allyClass: selectedClass,
-            enemyClass: "shadow",
+            enemyClass: getDefaultEnemyClassKey(selectedClass),
             effectType: "",
             actionText: "Standing by",
             phase: "idle",
@@ -2307,7 +2320,7 @@
         const phase = String(preview.phase || "idle");
 
         syncPreviewAvatar(allyVisual, preview.allyClass, "ally");
-        syncPreviewAvatar(enemyVisual, preview.enemyClass || "shadow", "enemy");
+        syncPreviewAvatar(enemyVisual, preview.enemyClass || getDefaultEnemyClassKey(preview.allyClass), "enemy");
         syncPreviewPhase(allySide, "apvp-preview-cast", phase === "action" || phase === "cast" || phase === "ally-action" || phase === "ally-cast", preview.eventId);
         syncPreviewPhase(allySide, "apvp-preview-hit", phase === "enemy-action" || phase === "enemy-hit" || phase === "enemy-cast", preview.eventId);
         syncPreviewPhase(enemySide, "apvp-preview-cast", phase === "enemy-action" || phase === "enemy-cast", preview.eventId);
@@ -2321,7 +2334,7 @@
 
     function buildPreviewMarkup(preview) {
         const allyProfile = getClassProfile(preview.allyClass);
-        const enemyProfile = getClassProfile(preview.enemyClass || "shadow");
+        const enemyProfile = getClassProfile(preview.enemyClass || getDefaultEnemyClassKey(preview.allyClass));
 
         return `
             <div class="apvp-preview-stage">
@@ -2332,7 +2345,7 @@
                     <div class="apvp-preview-effect" data-effect="${escapeHtml(preview.effectType || "")}" data-event="${escapeHtml(preview.eventId || 0)}"></div>
                 </div>
                 <div class="apvp-preview-side enemy">
-                    <div class="apvp-slot-visual" data-class="${escapeHtml(preview.enemyClass || "shadow")}" data-team="enemy" data-avatar-render="${escapeHtml(AVATAR_RENDER_VERSION)}">${buildAvatarMarkup(enemyProfile.label, preview.enemyClass || "shadow")}</div>
+                    <div class="apvp-slot-visual" data-class="${escapeHtml(preview.enemyClass || getDefaultEnemyClassKey(preview.allyClass))}" data-team="enemy" data-avatar-render="${escapeHtml(AVATAR_RENDER_VERSION)}">${buildAvatarMarkup(enemyProfile.label, preview.enemyClass || getDefaultEnemyClassKey(preview.allyClass))}</div>
                 </div>
             </div>
             <div class="apvp-preview-label">${escapeHtml(preview.actionText || "Standing by")}</div>
@@ -2345,7 +2358,7 @@
         }
 
         const rawClass = String(classKey || "").trim().toLowerCase();
-        const normalizedClass = rawClass && rawClass !== "auto" ? rawClass : "adventurer";
+        const normalizedClass = rawClass && rawClass !== "auto" ? normalizeClassKey(rawClass) : DEFAULT_CLASS_KEY;
         const profile = getClassProfile(normalizedClass);
         const needsRefresh = node.dataset.class !== normalizedClass
             || node.dataset.team !== team
@@ -2412,8 +2425,8 @@
         const phase = options.phase || (effectType ? "action" : "idle");
         previewState = buildPreviewState({
             ...previewState,
-            allyClass: options.allyClass || previewState.allyClass || getSelectedPlayerClassKey() || "adventurer",
-            enemyClass: options.enemyClass || previewState.enemyClass || "shadow",
+            allyClass: options.allyClass || previewState.allyClass || getSelectedPlayerClassKey() || DEFAULT_CLASS_KEY,
+            enemyClass: options.enemyClass || previewState.enemyClass || getDefaultEnemyClassKey(previewState.allyClass),
             effectType,
             actionText,
             phase,
@@ -2629,7 +2642,30 @@
     }
 
     function normalizeClassKey(value) {
-        return CLASS_KEYS.includes(value) ? value : "auto";
+        const raw = String(value || "").trim().toLowerCase();
+        if (!raw) {
+            return "auto";
+        }
+
+        const normalized = raw
+            .replace(/[_\s]+/g, "-")
+            .replace(/[^a-z0-9-]+/g, "")
+            .replace(/-+/g, "-")
+            .replace(/^-|-$/g, "");
+
+        const aliases = {
+            ranger: "hunter",
+            rogue: "assassin",
+            healer: "cleric",
+            "grandmage": "grand-mage",
+            saintess: "saint",
+            inquisitor: "inquisitor",
+            "magic-knight": "magic-knight",
+            "magicknight": "magic-knight"
+        };
+
+        const canonical = aliases[normalized] || normalized;
+        return CLASS_KEYS.includes(canonical) ? canonical : "auto";
     }
 
     function moveSkillPriority(index, direction) {
@@ -3780,7 +3816,7 @@
                 nextCheckAt: 0
             });
             recordPreviewEvent("Continuing solo match", "", {
-                allyClass: getSelectedPlayerClassKey() || "adventurer",
+                allyClass: getSelectedPlayerClassKey() || DEFAULT_CLASS_KEY,
                 phase: "idle"
             });
             clickElement(continueButton, "Continuing solo match");
@@ -3886,7 +3922,7 @@
             nextCheckAt: 0
         });
         recordPreviewEvent("Joined PvP matchmaking", "", {
-            allyClass: getSelectedPlayerClassKey() || "adventurer",
+            allyClass: getSelectedPlayerClassKey() || DEFAULT_CLASS_KEY,
             phase: "idle"
         });
         clickElement(joinButton, "Joined PvP matchmaking");
@@ -3905,8 +3941,8 @@
             recordBattleOutcome(resolution.outcome);
             const outcomeLabel = resolution.outcome === "loss" ? "Defeat" : resolution.outcome === "win" ? "Victory" : "Battle over";
             recordPreviewEvent(outcomeLabel, "", {
-                allyClass: getSelectedPlayerClassKey() || previewState.allyClass || "adventurer",
-                enemyClass: previewState.enemyClass || "shadow",
+                allyClass: getSelectedPlayerClassKey() || previewState.allyClass || DEFAULT_CLASS_KEY,
+                enemyClass: previewState.enemyClass || getDefaultEnemyClassKey(previewState.allyClass),
                 phase: "idle"
             });
             updateStatus(`Battle: ${outcomeLabel.toLowerCase()} detected, waiting for return`);
@@ -4004,8 +4040,8 @@
         battleNoTargetLoops = 0;
         const outcomeLabel = resolution.outcome === "loss" ? "Defeat" : resolution.outcome === "win" ? "Victory" : "Battle finished";
         recordPreviewEvent(outcomeLabel, "", {
-            allyClass: getSelectedPlayerClassKey() || previewState.allyClass || "adventurer",
-            enemyClass: previewState.enemyClass || "shadow",
+            allyClass: getSelectedPlayerClassKey() || previewState.allyClass || DEFAULT_CLASS_KEY,
+            enemyClass: previewState.enemyClass || getDefaultEnemyClassKey(previewState.allyClass),
             phase: "idle"
         });
         clickElement(backButton, `${outcomeLabel}, returning`);
@@ -4139,7 +4175,7 @@
         const effectType = getClassProfile(enemyClass).effect || "slash";
         const actorName = getSlotName(enemyActor);
         const now = Date.now();
-        const previewKey = `${actorName}|${enemyClass}|${previewState.allyClass || getSelectedPlayerClassKey() || "adventurer"}`;
+        const previewKey = `${actorName}|${enemyClass}|${previewState.allyClass || getSelectedPlayerClassKey() || DEFAULT_CLASS_KEY}`;
 
         if (!force && previewKey === lastEnemyPreviewKey && (now - lastEnemyPreviewAt) < 1400) {
             return;
@@ -4148,7 +4184,7 @@
         lastEnemyPreviewKey = previewKey;
         lastEnemyPreviewAt = now;
         recordPreviewEvent(`${actorName} attacks`, effectType, {
-            allyClass: previewState.allyClass || getSelectedPlayerClassKey() || "adventurer",
+            allyClass: previewState.allyClass || getSelectedPlayerClassKey() || DEFAULT_CLASS_KEY,
             enemyClass,
             phase: "enemy-action"
         });
@@ -4284,11 +4320,11 @@
                 return;
             }
 
-            const classKey = getPriorityClassKey() || "adventurer";
+            const classKey = getPriorityClassKey() || DEFAULT_CLASS_KEY;
             const skillName = getButtonLabel(chosenButton);
             recordPreviewEvent(`Used ${skillName}`, classifyEffect(skillName, classKey), {
                 allyClass: classKey,
-                enemyClass: lastTargetSlot ? resolveSlotClassKey(lastTargetSlot, "enemy") : "shadow",
+                enemyClass: lastTargetSlot ? resolveSlotClassKey(lastTargetSlot, "enemy") : getDefaultEnemyClassKey(classKey),
                 phase: "action"
             });
             clickElement(chosenButton, `Used ${getButtonLabel(chosenButton)}`);
@@ -4492,7 +4528,11 @@
         }
     }
 
-    function buildAvatarMarkup(label, classKey = "adventurer") {
+    function getAvatarArt(classKey) {
+        return AVATAR_ART[normalizeClassKey(classKey)] || "";
+    }
+
+    function buildLegacyAvatarMarkup(label, classKey = DEFAULT_CLASS_KEY) {
         return `
             <div class="apvp-avatar" data-avatar-class="${escapeHtml(normalizeClassKey(classKey))}" data-avatar-render="${escapeHtml(AVATAR_RENDER_VERSION)}" aria-hidden="true">
                 <div class="apvp-char-aura"></div>
@@ -4502,6 +4542,19 @@
                 <div class="apvp-char-head"></div>
                 <div class="apvp-char-hat"></div>
             </div>
+            <div class="apvp-badge">${escapeHtml(label)}</div>
+        `;
+    }
+
+    function buildAvatarMarkup(label, classKey = DEFAULT_CLASS_KEY) {
+        const normalizedClass = normalizeClassKey(classKey);
+        const art = getAvatarArt(normalizedClass);
+        if (!art) {
+            return buildLegacyAvatarMarkup(label, normalizedClass);
+        }
+
+        return `
+            <img class="apvp-avatar apvp-avatar-art" src="${art}" alt="" data-avatar-class="${escapeHtml(normalizedClass)}" data-avatar-render="${escapeHtml(AVATAR_RENDER_VERSION)}" aria-hidden="true" />
             <div class="apvp-badge">${escapeHtml(label)}</div>
         `;
     }
@@ -4527,22 +4580,26 @@
             return { primary: "#cb5932", secondary: "#ffd37d", hair: "#582416", skin: "#f3c8a7", glow: "rgba(255, 168, 108, 0.58)", outline: "#1a0e0d", accent: "#ffe4a6", dark: "#5c2a1f" };
         case "mage":
             return { primary: "#4b7dff", secondary: "#b08dff", hair: "#2e2964", skin: "#efcdb4", glow: "rgba(109, 172, 255, 0.52)", outline: "#131629", accent: "#d8c4ff", dark: "#25306a" };
-        case "ranger":
+        case "hunter":
             return { primary: "#4d9d53", secondary: "#d4ff7a", hair: "#2f3a21", skin: "#ecc69f", glow: "rgba(116, 220, 136, 0.48)", outline: "#142013", accent: "#efffc0", dark: "#24452a" };
-        case "rogue":
-            return { primary: "#4e5d86", secondary: "#9ec1ff", hair: "#182036", skin: "#dec1ad", glow: "rgba(120, 170, 255, 0.4)", outline: "#0e1421", accent: "#b3c2ff", dark: "#1d2a45" };
-        case "healer":
+        case "cleric":
             return { primary: "#55b89d", secondary: "#fff3af", hair: "#4a5734", skin: "#f1d7bf", glow: "rgba(127, 255, 212, 0.5)", outline: "#123329", accent: "#ffffff", dark: "#2e5a49" };
+        case "assassin":
+            return { primary: "#4e5d86", secondary: "#9ec1ff", hair: "#182036", skin: "#dec1ad", glow: "rgba(120, 170, 255, 0.4)", outline: "#0e1421", accent: "#b3c2ff", dark: "#1d2a45" };
+        case "archer":
+            return { primary: "#4c7d99", secondary: "#c6f3ff", hair: "#263449", skin: "#ecc69f", glow: "rgba(140, 220, 255, 0.45)", outline: "#11202c", accent: "#effcff", dark: "#224357" };
         case "paladin":
             return { primary: "#d1a63a", secondary: "#fff3bf", hair: "#6b5521", skin: "#efceaf", glow: "rgba(255, 224, 123, 0.52)", outline: "#33240e", accent: "#fffdf3", dark: "#7c6024" };
-        case "necromancer":
-            return { primary: "#7047b5", secondary: "#63d3a2", hair: "#1d1233", skin: "#d4c2dd", glow: "rgba(146, 104, 255, 0.48)", outline: "#120d1f", accent: "#b8f5da", dark: "#342053" };
-        case "monk":
-            return { primary: "#d88e47", secondary: "#ffe6a7", hair: "#69462b", skin: "#efc49c", glow: "rgba(255, 187, 102, 0.45)", outline: "#2a170e", accent: "#fff0cf", dark: "#784d24" };
         case "berserker":
             return { primary: "#c23d46", secondary: "#ffba69", hair: "#5a1a1f", skin: "#e8b699", glow: "rgba(255, 111, 112, 0.48)", outline: "#240b0f", accent: "#ffd7a2", dark: "#6a252a" };
-        case "shadow":
-            return { primary: "#505575", secondary: "#b59af8", hair: "#171a28", skin: "#c8bfd8", glow: "rgba(141, 146, 210, 0.42)", outline: "#0e1320", accent: "#d6cbff", dark: "#252845" };
+        case "grand-mage":
+            return { primary: "#5e4ae6", secondary: "#e1b7ff", hair: "#2d224f", skin: "#efcdb4", glow: "rgba(170, 134, 255, 0.5)", outline: "#16122b", accent: "#f1ddff", dark: "#31276f" };
+        case "saint":
+            return { primary: "#9edfc0", secondary: "#fff7c7", hair: "#5a6042", skin: "#f1d7bf", glow: "rgba(183, 255, 214, 0.48)", outline: "#223126", accent: "#ffffff", dark: "#456652" };
+        case "inquisitor":
+            return { primary: "#c8b17c", secondary: "#fff1b7", hair: "#4f3521", skin: "#efceaf", glow: "rgba(255, 210, 142, 0.45)", outline: "#2c1a0d", accent: "#ffe6c4", dark: "#6f4a2a" };
+        case "magic-knight":
+            return { primary: "#4f81ff", secondary: "#9fe7ff", hair: "#203d7a", skin: "#efceaf", glow: "rgba(124, 192, 255, 0.5)", outline: "#14203a", accent: "#dff8ff", dark: "#284d97" };
         default:
             return { primary: "#83b8ff", secondary: "#e7f1ff", hair: "#4c5568", skin: "#ffd2b8", glow: "rgba(131, 184, 255, 0.45)", outline: "#1b2330", accent: "#f9fcff", dark: "#314157" };
         }
@@ -4562,22 +4619,28 @@
                 <circle cx="32" cy="19" r="4.5" fill="${palette.secondary}" opacity="0.95"></circle>
                 <path d="M13 10 L22 4 L31 10" fill="${palette.secondary}" stroke="${palette.outline}" stroke-width="1.5"></path>
             `;
-        case "ranger":
+        case "hunter":
             return `
                 <path d="M34 21 C38 23, 38 33, 34 35" stroke="${palette.accent}" stroke-width="2.2" fill="none"></path>
                 <path d="M31 20 C35 23, 35 33, 31 36" stroke="${palette.dark}" stroke-width="2.2" fill="none"></path>
                 <path d="M30 21 L37 36" stroke="${palette.accent}" stroke-width="1.8"></path>
             `;
-        case "rogue":
-            return `
-                <path d="M13 8 C17 5, 27 5, 31 8 L28 18 L16 18 Z" fill="${palette.dark}" opacity="0.92"></path>
-                <path d="M30 28 L37 23" stroke="${palette.accent}" stroke-width="2.6" stroke-linecap="round"></path>
-            `;
-        case "healer":
+        case "cleric":
             return `
                 <path d="M33 22 L36 40" stroke="${palette.accent}" stroke-width="2.6" stroke-linecap="round"></path>
                 <path d="M16 26 H24" stroke="${palette.accent}" stroke-width="2.2" stroke-linecap="round"></path>
                 <path d="M20 22 V30" stroke="${palette.accent}" stroke-width="2.2" stroke-linecap="round"></path>
+            `;
+        case "assassin":
+            return `
+                <path d="M13 8 C17 5, 27 5, 31 8 L28 18 L16 18 Z" fill="${palette.dark}" opacity="0.92"></path>
+                <path d="M30 28 L37 23" stroke="${palette.accent}" stroke-width="2.6" stroke-linecap="round"></path>
+            `;
+        case "archer":
+            return `
+                <path d="M34 21 C38 23, 38 33, 34 35" stroke="${palette.accent}" stroke-width="2.2" fill="none"></path>
+                <path d="M31 20 C35 23, 35 33, 31 36" stroke="${palette.dark}" stroke-width="2.2" fill="none"></path>
+                <path d="M30 21 L37 36" stroke="${palette.accent}" stroke-width="1.8"></path>
             `;
         case "paladin":
             return `
@@ -4585,18 +4648,17 @@
                 <path d="M31 24 L37 19" stroke="${palette.secondary}" stroke-width="2.8" stroke-linecap="round"></path>
                 <circle cx="12" cy="28" r="1.6" fill="${palette.primary}"></circle>
             `;
-        case "necromancer":
+        case "grand-mage":
             return `
                 <path d="M33 20 L36 40" stroke="${palette.accent}" stroke-width="2.5" stroke-linecap="round"></path>
                 <circle cx="32" cy="17" r="4.2" fill="${palette.secondary}" opacity="0.75"></circle>
-                <circle cx="31" cy="16.5" r="0.9" fill="${palette.outline}"></circle>
-                <circle cx="34" cy="16.5" r="0.9" fill="${palette.outline}"></circle>
+                <path d="M13 10 L22 4 L31 10" fill="${palette.secondary}" stroke="${palette.outline}" stroke-width="1.5"></path>
             `;
-        case "monk":
+        case "saint":
             return `
-                <circle cx="12" cy="28" r="3.4" fill="${palette.accent}" opacity="0.82"></circle>
-                <circle cx="32" cy="28" r="3.4" fill="${palette.accent}" opacity="0.82"></circle>
-                <path d="M14 9 C18 6, 26 6, 30 9" stroke="${palette.outline}" stroke-width="1.8" fill="none"></path>
+                <path d="M33 22 L36 40" stroke="${palette.accent}" stroke-width="2.6" stroke-linecap="round"></path>
+                <path d="M16 26 H24" stroke="${palette.accent}" stroke-width="2.2" stroke-linecap="round"></path>
+                <path d="M20 22 V30" stroke="${palette.accent}" stroke-width="2.2" stroke-linecap="round"></path>
             `;
         case "berserker":
             return `
@@ -4604,10 +4666,17 @@
                 <path d="M36 13 L41 18 L39 21 L34 16 Z" fill="#f4ebe0" stroke="${palette.outline}" stroke-width="1"></path>
                 <path d="M13 9 L16 5 L19 9" fill="${palette.accent}" opacity="0.88"></path>
             `;
-        case "shadow":
+        case "inquisitor":
             return `
-                <path d="M12 8 C17 3, 27 3, 32 8 L28 18 L16 18 Z" fill="${palette.dark}" opacity="0.96"></path>
-                <path d="M30 27 L38 21" stroke="${palette.secondary}" stroke-width="2.6" stroke-linecap="round"></path>
+                <path d="M33 22 L36 40" stroke="${palette.accent}" stroke-width="2.5" stroke-linecap="round"></path>
+                <path d="M16 26 H24" stroke="${palette.secondary}" stroke-width="2.1" stroke-linecap="round"></path>
+                <path d="M20 22 V30" stroke="${palette.secondary}" stroke-width="2.1" stroke-linecap="round"></path>
+            `;
+        case "magic-knight":
+            return `
+                <path d="M31 24 L39 18" stroke="${palette.accent}" stroke-width="3" stroke-linecap="round"></path>
+                <path d="M36 15 L40 19 L39 22 L35 18 Z" fill="#f4f0ea" stroke="${palette.outline}" stroke-width="1"></path>
+                <circle cx="32" cy="23" r="3.8" fill="${palette.secondary}" opacity="0.82"></circle>
             `;
         default:
             return `
@@ -4635,7 +4704,8 @@
 
     function resolveSlotClassKey(slot, team) {
         if (!(slot instanceof Element)) {
-            return team === "enemy" ? "shadow" : getSelectedPlayerClassKey() || "adventurer";
+            const allyClass = getSelectedPlayerClassKey() || DEFAULT_CLASS_KEY;
+            return team === "enemy" ? getDefaultEnemyClassKey(allyClass) : allyClass;
         }
 
         if (team === "ally" && settings.playerClass !== "auto") {
@@ -4669,7 +4739,8 @@
             return detected;
         }
 
-        return team === "enemy" ? "shadow" : getSelectedPlayerClassKey() || "adventurer";
+        const allyClass = getSelectedPlayerClassKey() || DEFAULT_CLASS_KEY;
+        return team === "enemy" ? getDefaultEnemyClassKey(allyClass) : allyClass;
     }
 
     function readTextCandidates(root, selectors) {
@@ -4742,32 +4813,44 @@
             return null;
         }
 
+        if (/\bmagic[\s-]*knight\b|\bspellblade\b|\barcane knight\b/.test(value)) {
+            return "magic-knight";
+        }
+
+        if (/\bgrand[\s-]*mage\b|\barchmage\b/.test(value)) {
+            return "grand-mage";
+        }
+
+        if (/\binquisitor\b/.test(value)) {
+            return "inquisitor";
+        }
+
+        if (/\bsaint\b/.test(value)) {
+            return "saint";
+        }
+
         if (/(paladin|templar|crusader|holy knight|smite|divine)/.test(value)) {
             return "paladin";
         }
 
-        if (/(necromancer|lich|reaper|death mage|doom|curse|drain|shadowbolt)/.test(value)) {
-            return "necromancer";
-        }
-
-        if (/(healer|cleric|priest|saint|support|restore|heal|mend|bless)/.test(value)) {
-            return "healer";
+        if (/(healer|cleric|priest|support|restore|heal|mend|bless)/.test(value)) {
+            return "cleric";
         }
 
         if (/(mage|wizard|sorcerer|warlock|arcane|fireball|frost|meteor|bolt)/.test(value)) {
             return "mage";
         }
 
-        if (/(ranger|archer|hunter|sniper|gunslinger|arrow|bow|snipe)/.test(value)) {
-            return "ranger";
+        if (/\barcher\b|\bmarksman\b|\bmultishot\b|\bvolley\b/.test(value)) {
+            return "archer";
+        }
+
+        if (/(hunter|ranger|sniper|gunslinger|arrow|bow|snipe)/.test(value)) {
+            return "hunter";
         }
 
         if (/(rogue|assassin|ninja|thief|duelist|shadowblade|stab|poison)/.test(value)) {
-            return "rogue";
-        }
-
-        if (/(monk|brawler|pugilist|martial|chi|fist|palm|combo)/.test(value)) {
-            return "monk";
+            return "assassin";
         }
 
         if (/(berserker|barbarian|slayer|axe|rage|frenzy|cleave)/.test(value)) {
@@ -4778,10 +4861,6 @@
             return "warrior";
         }
 
-        if (/(shadow|void|phantom|specter|dark)/.test(value)) {
-            return "shadow";
-        }
-
         return null;
     }
 
@@ -4790,7 +4869,7 @@
             return { label: "Auto", effect: "slash", colors: ["#83b8ff", "#e7f1ff"] };
         }
 
-        return CLASS_PROFILES[classKey] || CLASS_PROFILES.adventurer;
+        return CLASS_PROFILES[classKey] || CLASS_PROFILES[DEFAULT_CLASS_KEY];
     }
 
     function animateSkillCast(skillName) {
@@ -4805,7 +4884,7 @@
         const target = resolveEffectTarget(effectType, actor);
         recordPreviewEvent(`Used ${skillName}`, effectType, {
             allyClass: actorClass,
-            enemyClass: target ? resolveSlotClassKey(target, getSlotTeam(target)) : previewState.enemyClass || "shadow",
+            enemyClass: target ? resolveSlotClassKey(target, getSlotTeam(target)) : previewState.enemyClass || getDefaultEnemyClassKey(actorClass),
             phase: "action"
         });
     }

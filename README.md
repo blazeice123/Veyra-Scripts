@@ -21,6 +21,7 @@ Tampermonkey userscript for `demonicscans.org` PvP automation.
 ## Files
 
 - `auto-pvp.user.js`: the Tampermonkey userscript
+- `gravy-pvp-avatars.js`: embedded class sprite art loaded by the userscript through `@require`
 
 ## Install
 
@@ -29,6 +30,8 @@ Tampermonkey userscript for `demonicscans.org` PvP automation.
    `https://raw.githubusercontent.com/blazeice123/Veyra-Scripts/main/auto-pvp.user.js`
 3. Tampermonkey should open the install or update prompt automatically.
 4. If it does not, open Tampermonkey Dashboard and import the script manually.
+
+The repo must include both `auto-pvp.user.js` and `gravy-pvp-avatars.js` at the repo root so the avatar art can load correctly.
 
 ## Notes
 

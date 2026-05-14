@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         GravyPvP
 // @namespace    https://github.com/blazeice123/Veyra-Scripts
-// @version      3.30
+// @version      3.31
 // @description  Auto joins PvP matches, decorates classes with avatars, and adds animated attack effects.
 // @author       GravySEALttv
 // @match        https://demonicscans.org/pvp_battle.php*
@@ -34,7 +34,7 @@
     const LAUNCH_FLAGS = parseLaunchFlags();
     const WORKER_MODE = LAUNCH_FLAGS.worker === "1";
     const WORKER_SESSION_ID = String(LAUNCH_FLAGS.session || "").trim();
-    const SCRIPT_VERSION = "3.30";
+    const SCRIPT_VERSION = "3.31";
     const DEFAULT_CLASS_KEY = "warrior";
     const AVATAR_ART = window.GRAVY_PVP_AVATAR_ART || {};
     const HAS_AVATAR_ART = !!AVATAR_ART && Object.keys(AVATAR_ART).length > 0;
@@ -2325,8 +2325,8 @@
 
         const allySide = container.querySelector(".apvp-preview-side.ally");
         const enemySide = container.querySelector(".apvp-preview-side.enemy");
-        const allyVisual = allySide?.querySelector(".apvp-slot-visual");
-        const enemyVisual = enemySide?.querySelector(".apvp-slot-visual");
+        const allyVisual = ensurePreviewVisualShell(allySide, preview.allyClass, "ally");
+        const enemyVisual = ensurePreviewVisualShell(enemySide, preview.enemyClass || getDefaultEnemyClassKey(preview.allyClass), "enemy");
         const labelNode = container.querySelector(".apvp-preview-label");
         const phase = String(preview.phase || "idle");
 
@@ -2361,6 +2361,23 @@
             </div>
             <div class="apvp-preview-label">${escapeHtml(preview.actionText || "Standing by")}</div>
         `;
+    }
+
+    function ensurePreviewVisualShell(side, classKey, team) {
+        if (!(side instanceof HTMLElement)) {
+            return null;
+        }
+
+        let visual = side.querySelector(".apvp-slot-visual");
+        if (!(visual instanceof HTMLElement)) {
+            visual = document.createElement("div");
+            visual.className = "apvp-slot-visual";
+            side.appendChild(visual);
+        }
+
+        visual.dataset.class = normalizeClassKey(classKey || DEFAULT_CLASS_KEY);
+        visual.dataset.team = team;
+        return visual;
     }
 
     function syncPreviewAvatar(node, classKey, team) {

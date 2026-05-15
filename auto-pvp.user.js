@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         GravyPvP
 // @namespace    https://github.com/blazeice123/Veyra-Scripts
-// @version      3.43
+// @version      3.44
 // @description  Auto joins PvP matches, decorates classes with avatars, and adds animated attack effects.
 // @author       GravySEALttv
 // @match        https://demonicscans.org/pvp_battle.php*
@@ -34,7 +34,7 @@
     const LAUNCH_FLAGS = parseLaunchFlags();
     const WORKER_MODE = LAUNCH_FLAGS.worker === "1";
     const WORKER_SESSION_ID = String(LAUNCH_FLAGS.session || "").trim();
-    const SCRIPT_VERSION = "3.43";
+    const SCRIPT_VERSION = "3.44";
     const DEFAULT_CLASS_KEY = "warrior";
     const AVATAR_ART = window.GRAVY_PVP_AVATAR_ART || {};
     const HAS_AVATAR_ART = !!AVATAR_ART && Object.keys(AVATAR_ART).length > 0;
@@ -5722,18 +5722,33 @@
     }
 
     function getTokenCount() {
-        const selectors = [
-            ".info-pill:last-child span",
-            ".info-pill span",
-            "[data-token-count]"
-        ];
-
-        for (const selector of selectors) {
-            const element = document.querySelector(selector);
-            if (!element) {
-                continue;
+        const soloButton = document.querySelector(".js-matchmake[data-ladder='solo'], .action-btn.js-matchmake[data-ladder='solo']");
+        const soloSection = soloButton?.closest("section, .section, .section-card, .panel, .card, .section-box");
+        if (soloSection) {
+            const tokenPills = Array.from(soloSection.querySelectorAll(".info-pill, [data-token-count]"));
+            for (const pill of tokenPills) {
+                const strongLabel = String(pill.querySelector("strong")?.textContent || "").trim().toLowerCase();
+                const raw = pill.getAttribute("data-token-count") || pill.textContent || "";
+                if (strongLabel.startsWith("tokens")) {
+                    const parsed = parseIntegerFromText(raw);
+                    if (Number.isFinite(parsed)) {
+                        return parsed;
+                    }
+                }
             }
 
+            const sectionText = String(soloSection.textContent || "").replace(/\s+/g, " ");
+            const sectionMatch = sectionText.match(/tokens:\s*([\d,]+)/i);
+            if (sectionMatch) {
+                const parsed = parseIntegerFromText(sectionMatch[1]);
+                if (Number.isFinite(parsed)) {
+                    return parsed;
+                }
+            }
+        }
+
+        const explicitTokenElements = Array.from(document.querySelectorAll("[data-token-count]"));
+        for (const element of explicitTokenElements) {
             const raw = element.getAttribute("data-token-count") || element.textContent || "";
             const parsed = parseIntegerFromText(raw);
             if (Number.isFinite(parsed)) {

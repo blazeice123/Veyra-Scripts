@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         GravyPvP
 // @namespace    https://github.com/blazeice123/Veyra-Scripts
-// @version      3.44
+// @version      3.45
 // @description  Auto joins PvP matches, decorates classes with avatars, and adds animated attack effects.
 // @author       GravySEALttv
 // @match        https://demonicscans.org/pvp_battle.php*
@@ -34,7 +34,7 @@
     const LAUNCH_FLAGS = parseLaunchFlags();
     const WORKER_MODE = LAUNCH_FLAGS.worker === "1";
     const WORKER_SESSION_ID = String(LAUNCH_FLAGS.session || "").trim();
-    const SCRIPT_VERSION = "3.44";
+    const SCRIPT_VERSION = "3.45";
     const DEFAULT_CLASS_KEY = "warrior";
     const AVATAR_ART = window.GRAVY_PVP_AVATAR_ART || {};
     const HAS_AVATAR_ART = !!AVATAR_ART && Object.keys(AVATAR_ART).length > 0;
@@ -3976,7 +3976,11 @@
             return;
         }
 
-        const tokens = getTokenCount();
+        const localTokens = getTokenCount();
+        const hostVisibleTokens = getHostVisibleSoloTokenCount();
+        const tokens = Number.isFinite(localTokens) && Number.isFinite(hostVisibleTokens)
+            ? Math.max(localTokens, hostVisibleTokens)
+            : (Number.isFinite(localTokens) ? localTokens : hostVisibleTokens);
         const tokenLabel = Number.isFinite(tokens) ? `tokens ${tokens}` : "tokens unknown";
         const shouldMonitorTokens = WORKER_MODE && settings.enabled;
         const readyTokenCount = Number(CONFIG.readyTokenCount) || 30;
@@ -5721,8 +5725,12 @@
         return match ? Number.parseInt(match[0], 10) : Number.NaN;
     }
 
-    function getTokenCount() {
-        const soloButton = document.querySelector(".js-matchmake[data-ladder='solo'], .action-btn.js-matchmake[data-ladder='solo']");
+    function getSoloTokenCountFromDocument(doc = document) {
+        if (!doc || typeof doc.querySelector !== "function") {
+            return Number.NaN;
+        }
+
+        const soloButton = doc.querySelector(".js-matchmake[data-ladder='solo'], .action-btn.js-matchmake[data-ladder='solo']");
         const soloSection = soloButton?.closest("section, .section, .section-card, .panel, .card, .section-box");
         if (soloSection) {
             const tokenPills = Array.from(soloSection.querySelectorAll(".info-pill, [data-token-count]"));
@@ -5747,7 +5755,7 @@
             }
         }
 
-        const explicitTokenElements = Array.from(document.querySelectorAll("[data-token-count]"));
+        const explicitTokenElements = Array.from(doc.querySelectorAll("[data-token-count]"));
         for (const element of explicitTokenElements) {
             const raw = element.getAttribute("data-token-count") || element.textContent || "";
             const parsed = parseIntegerFromText(raw);
@@ -5757,6 +5765,28 @@
         }
 
         return Number.NaN;
+    }
+
+    function getHostVisibleSoloTokenCount() {
+        if (!WORKER_MODE) {
+            return Number.NaN;
+        }
+
+        try {
+            const topWindow = window.top;
+            const topDocument = topWindow?.document;
+            if (!topDocument || topDocument === document) {
+                return Number.NaN;
+            }
+
+            return getSoloTokenCountFromDocument(topDocument);
+        } catch (error) {
+            return Number.NaN;
+        }
+    }
+
+    function getTokenCount() {
+        return getSoloTokenCountFromDocument(document);
     }
 
     function getPlayerSoulCount() {

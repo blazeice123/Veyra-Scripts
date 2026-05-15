@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         GravyPvP
 // @namespace    https://github.com/blazeice123/Veyra-Scripts
-// @version      3.45
+// @version      3.46
 // @description  Auto joins PvP matches, decorates classes with avatars, and adds animated attack effects.
 // @author       GravySEALttv
 // @match        https://demonicscans.org/pvp_battle.php*
@@ -34,7 +34,7 @@
     const LAUNCH_FLAGS = parseLaunchFlags();
     const WORKER_MODE = LAUNCH_FLAGS.worker === "1";
     const WORKER_SESSION_ID = String(LAUNCH_FLAGS.session || "").trim();
-    const SCRIPT_VERSION = "3.45";
+    const SCRIPT_VERSION = "3.46";
     const DEFAULT_CLASS_KEY = "warrior";
     const AVATAR_ART = window.GRAVY_PVP_AVATAR_ART || {};
     const HAS_AVATAR_ART = !!AVATAR_ART && Object.keys(AVATAR_ART).length > 0;
@@ -4012,6 +4012,18 @@
             return;
         }
 
+        if (isSoloMatchmakingClosed(document)) {
+            setWorkerUiState({
+                mode: "monitoring",
+                tokenCount: displayTokenCount,
+                readyTokenCount,
+                showStartNow: false,
+                nextCheckAt: 0
+            });
+            updateStatus(`Lobby: solo matchmaking is closed, ${tokenLabel}`);
+            return;
+        }
+
         if (!joinButton) {
             if (shouldMonitorTokens) {
                 maybeRefreshLobbyMonitor(`Lobby: waiting for join button, ${tokenLabel}`, {
@@ -5725,13 +5737,37 @@
         return match ? Number.parseInt(match[0], 10) : Number.NaN;
     }
 
+    function getSoloLadderSection(doc = document) {
+        if (!doc || typeof doc.querySelector !== "function") {
+            return null;
+        }
+
+        const soloButton = doc.querySelector(".js-matchmake[data-ladder='solo'], .action-btn.js-matchmake[data-ladder='solo']");
+        const buttonSection = soloButton?.closest("section, .section, .section-card, .panel, .card, .section-box");
+        if (buttonSection) {
+            return buttonSection;
+        }
+
+        return Array.from(doc.querySelectorAll("section, .section, .section-card, .panel, .card, .section-box"))
+            .find((section) => /solo\s+ladder/i.test(String(section.textContent || ""))) || null;
+    }
+
+    function isSoloMatchmakingClosed(doc = document) {
+        const soloSection = getSoloLadderSection(doc);
+        if (!soloSection) {
+            return false;
+        }
+
+        const sectionText = String(soloSection.textContent || "").replace(/\s+/g, " ").trim();
+        return /season ended|solo matchmaking is closed|matchmaking is closed|season closed/i.test(sectionText);
+    }
+
     function getSoloTokenCountFromDocument(doc = document) {
         if (!doc || typeof doc.querySelector !== "function") {
             return Number.NaN;
         }
 
-        const soloButton = doc.querySelector(".js-matchmake[data-ladder='solo'], .action-btn.js-matchmake[data-ladder='solo']");
-        const soloSection = soloButton?.closest("section, .section, .section-card, .panel, .card, .section-box");
+        const soloSection = getSoloLadderSection(doc);
         if (soloSection) {
             const tokenPills = Array.from(soloSection.querySelectorAll(".info-pill, [data-token-count]"));
             for (const pill of tokenPills) {

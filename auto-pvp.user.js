@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         GravyPvP
 // @namespace    https://github.com/blazeice123/Veyra-Scripts
-// @version      3.46
+// @version      3.48
 // @description  Auto joins PvP matches, decorates classes with avatars, and adds animated attack effects.
 // @author       GravySEALttv
 // @match        https://demonicscans.org/pvp_battle.php*
@@ -33,8 +33,12 @@
     const CLASS_KEYS = ["auto", "warrior", "mage", "hunter", "cleric", "assassin", "archer", "berserker", "grand-mage", "saint", "paladin", "inquisitor", "magic-knight"];
     const LAUNCH_FLAGS = parseLaunchFlags();
     const WORKER_MODE = LAUNCH_FLAGS.worker === "1";
+    const BOOT_IS_FRAME = window.top !== window.self;
     const WORKER_SESSION_ID = String(LAUNCH_FLAGS.session || "").trim();
-    const SCRIPT_VERSION = "3.46";
+    const SCRIPT_VERSION = "3.48";
+    if (BOOT_IS_FRAME && !WORKER_MODE) {
+        return;
+    }
     const DEFAULT_CLASS_KEY = "warrior";
     const AVATAR_ART = window.GRAVY_PVP_AVATAR_ART || {};
     const HAS_AVATAR_ART = !!AVATAR_ART && Object.keys(AVATAR_ART).length > 0;
@@ -3614,6 +3618,20 @@
             const reportUiState = matchingReport?.workerUiState && typeof matchingReport.workerUiState === "object"
                 ? matchingReport.workerUiState
                 : null;
+            const reportedMode = String(reportUiState?.mode || "");
+            const reportedTokenCount = Number.isFinite(Number(reportUiState?.tokenCount))
+                ? Number(reportUiState.tokenCount)
+                : null;
+            const shouldPreferVisibleHostTokens = !WORKER_MODE
+                && /^(monitoring|armed|idle)?$/i.test(reportedMode)
+                && /\/pvp\.php/i.test(String(matchingReport?.path || ""));
+            const visibleHostSoloTokens = shouldPreferVisibleHostTokens
+                ? getSoloTokenCountFromDocument(document)
+                : Number.NaN;
+            const resolvedTokenCount = Number.isFinite(visibleHostSoloTokens) && visibleHostSoloTokens >= 0
+                && (reportedTokenCount === null || visibleHostSoloTokens > reportedTokenCount)
+                ? visibleHostSoloTokens
+                : reportedTokenCount;
             const fallbackShowStartNow = !!matchingReport
                 && /\/pvp\.php/i.test(String(matchingReport.path || ""))
                 && /banking tokens|start now armed|start now override armed/i.test(String(matchingReport.detail || ""));
@@ -3624,8 +3642,8 @@
                 spendTokenPool: !!matchingReport?.spendTokenPool,
                 stopAfterBattle: !!matchingReport?.stopAfterBattle,
                 showStartNow: typeof reportUiState?.showStartNow === "boolean" ? reportUiState.showStartNow : fallbackShowStartNow,
-                mode: String(reportUiState?.mode || ""),
-                tokenCount: Number.isFinite(Number(reportUiState?.tokenCount)) ? Number(reportUiState.tokenCount) : null,
+                mode: reportedMode,
+                tokenCount: resolvedTokenCount,
                 soulCount: Number.isFinite(Number(reportUiState?.soulCount)) ? Number(reportUiState.soulCount) : null,
                 readyTokenCount: Number.isFinite(Number(reportUiState?.readyTokenCount)) ? Number(reportUiState.readyTokenCount) : (Number(CONFIG.readyTokenCount) || 30),
                 nextCheckAt: Number.isFinite(Number(reportUiState?.nextCheckAt)) ? Number(reportUiState.nextCheckAt) : 0
